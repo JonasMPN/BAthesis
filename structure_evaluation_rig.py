@@ -114,7 +114,7 @@ class EvaluationRig(PredictionEvaluator):
         for col in mean_cols:
             df_mean_values[col] = df_mean_values[col]/df_mean_values[col].max()
         df_mean_values = df_mean_values.T if plot_as == "bar" else df_mean_values
-        plotter[plot_as](save_directory, compare_col, df_mean_values, 16, 9, 100)
+        plotter[plot_as](save_directory, compare_col, n_param_combinations, df_mean_values, 16, 9, 100)
 
     def __evaluate_dir_ids(self, dir_ids: dict) -> dict:
         current_data_dir = self.dir_root + f"/data/{dir_ids['data']}"
@@ -137,6 +137,7 @@ class EvaluationRig(PredictionEvaluator):
     @staticmethod
     def __bar_plots(save_directory: str,
                     compare_param: str,
+                    n_param_combinations: int,
                     dataframe: pd.DataFrame,
                     img_width: float,
                     img_height: float,
@@ -144,13 +145,15 @@ class EvaluationRig(PredictionEvaluator):
         fig, ax = plt.subplots()
         fig.set_size_inches(img_width, img_height)
         dataframe.plot.bar(ax=ax)
-        plt.title(f"Compared parameter: {compare_param}")
+        plt.title(f"Compared parameter: {compare_param}. Parameter combinations: {n_param_combinations}")
+        plt.xticks(rotation="horizontal")
         plt.savefig(save_directory+f"/compare_{compare_param}_bar.png", dpi=dpi)
         plt.close(fig)
 
     @staticmethod
     def __pie_plots(save_directory: str,
                     compare_param: str,
+                    n_param_combinations: int,
                     dataframe: pd.DataFrame,
                     img_width: float,
                     img_height: float,
@@ -159,7 +162,7 @@ class EvaluationRig(PredictionEvaluator):
             fig, ax = plt.subplots()
             fig.set_size_inches(img_width, img_height)
             dataframe[col].plot.pie(y=col, ax=ax)
-            plt.title(f"Compared parameter: {compare_param}")
+            plt.title(f"Compared parameter: {compare_param}. Parameter combinations: {n_param_combinations}")
             plt.savefig(save_directory + f"/compare_{compare_param}_pie_{col}.png", dpi=dpi)
             plt.close(fig)
 
