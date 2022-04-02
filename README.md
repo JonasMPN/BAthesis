@@ -1,7 +1,7 @@
 # BA thesis
 Vortex detection in a 2-dimensional flow field using deep neuronal networks.  
 NOTE:  
-The files in "external_code" are imported files which I therefore did not develop. Only the files in "own_code" belong to me.  
+The files coco_eval, coco_utils, engine, transforms and utils have not been created by me.
 
 ## data_evaluation.py  
 This file provides functionalities to:  
