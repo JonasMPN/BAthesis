@@ -52,12 +52,15 @@ class EvaluationRig(PredictionEvaluator):
         pd.DataFrame(evaluation).to_csv(self.file_protocol, index=False)
 
     def compare(self,
+                save_directory: str,
                 compare_col: str,
                 criteria: dict,
                 result_cols: list[str],
                 mean_cols: list[str]=None,
-                ignore_cols: list[str]=None):
+                ignore_cols: list[str]=None,
+                plot_as: str="bar"):
         """
+        :param save_directory:
         :param param:
         :param result_cols: columns that represent parameters that have not been set, but are results of an experiment
         :param criteria: {"param": "bigger" or "smaller"}
@@ -72,6 +75,9 @@ class EvaluationRig(PredictionEvaluator):
         for ignore in ignore_cols:
             if ignore in result_cols+mean_cols:
                 raise ValueError(f"Ignored column {ignore} must not be existing in result_cols or mean_cols.")
+        if plot_as not in ["bar", "pie"]:
+            raise ValueError(f"Parameter plot_as must be either 'bar' or 'pie'. Plotting as {plot_as} is not "
+                             f"supported.")
         ignore_cols = ignore_cols if ignore_cols is not None else list()
         mean_cols = mean_cols if mean_cols is not None else list()
         df_protocol = copy(self.df_protocol)
@@ -79,9 +85,12 @@ class EvaluationRig(PredictionEvaluator):
         for parameter in [compare_col, criteria_param] + ignore_cols + mean_cols:
             if parameter not in existing_params:
                 raise ValueError(f"Parameter {parameter} does not exist in the file {self.file_protocol}.")
+        plotter = {"bar": self.__bar_plots, "pie": self.__pie_plots}
+
         df_protocol = df_protocol.drop(ignore_cols, axis=1)
         df_param_combinations = df_protocol.drop([compare_col, criteria_param] + mean_cols + result_cols, axis=1)
         compare_overview = list()
+        n_param_combinations = 0
         while df_param_combinations.shape[0] > 0:
             ids = self.__filter_param_combination(df_param_combinations).index.tolist()
             df_filtered = df_protocol.loc[ids]
@@ -89,21 +98,23 @@ class EvaluationRig(PredictionEvaluator):
                        df_filtered[criteria_param].idxmin()
             compare_overview.append(df_protocol[compare_col].loc[best_idx])
             df_param_combinations = df_param_combinations.drop(ids)
+            n_param_combinations += 1
 
         compare_values = df_protocol[compare_col].unique().tolist()
         mean_values = {mean_param: {compare_value: None for compare_value in compare_values} for mean_param in
-                       mean_cols}
-        for compare_param in df_protocol[compare_col].unique():
-            df_filtered = df_protocol.loc[df_protocol[compare_col] == compare_param]
+                       [f"{criteria_param}_best"]+mean_cols}
+        for compare_value in compare_values:
+            df_filtered = df_protocol.loc[df_protocol[compare_col] == compare_value]
             for mean_col in mean_cols:
-                mean_values[mean_col][compare_param] = df_filtered[mean_col].mean()
+                mean_values[mean_col][compare_value] = df_filtered[mean_col].mean()
+            mean_values[f"{criteria_param}_best"][compare_value] = compare_overview.count(
+                compare_value)/n_param_combinations
+            #  The above line is not actually a mean value.
         df_mean_values = pd.DataFrame(mean_values)
-        for col in copy(df_mean_values).columns:
+        for col in mean_cols:
             df_mean_values[col] = df_mean_values[col]/df_mean_values[col].max()
-        fig, ax = plt.subplots()
-        df_mean_values.plot.bar(ax=ax)
-        plt.savefig(self.dir_root+f"/bar_results.png")
-        plt.close(fig)
+        df_mean_values = df_mean_values.T if plot_as == "bar" else df_mean_values
+        plotter[plot_as](save_directory, compare_col, df_mean_values, 16, 9, 100)
 
     def __evaluate_dir_ids(self, dir_ids: dict) -> dict:
         current_data_dir = self.dir_root + f"/data/{dir_ids['data']}"
@@ -124,6 +135,35 @@ class EvaluationRig(PredictionEvaluator):
         return averaged
 
     @staticmethod
+    def __bar_plots(save_directory: str,
+                    compare_param: str,
+                    dataframe: pd.DataFrame,
+                    img_width: float,
+                    img_height: float,
+                    dpi: int):
+        fig, ax = plt.subplots()
+        fig.set_size_inches(img_width, img_height)
+        dataframe.plot.bar(ax=ax)
+        plt.title(f"Compared parameter: {compare_param}")
+        plt.savefig(save_directory+f"/compare_{compare_param}_bar.png", dpi=dpi)
+        plt.close(fig)
+
+    @staticmethod
+    def __pie_plots(save_directory: str,
+                    compare_param: str,
+                    dataframe: pd.DataFrame,
+                    img_width: float,
+                    img_height: float,
+                    dpi: int):
+        for col in dataframe.columns:
+            fig, ax = plt.subplots()
+            fig.set_size_inches(img_width, img_height)
+            dataframe[col].plot.pie(y=col, ax=ax)
+            plt.title(f"Compared parameter: {compare_param}")
+            plt.savefig(save_directory + f"/compare_{compare_param}_pie_{col}.png", dpi=dpi)
+            plt.close(fig)
+
+    @staticmethod
     def __filter_param_combination(dataframe: pd.DataFrame) -> pd.DataFrame:
         df_iter = copy(dataframe)
         n_rows = df_iter.shape[0]
@@ -135,3 +175,6 @@ class EvaluationRig(PredictionEvaluator):
                 break
             n_rows = dataframe.shape[0]
         return dataframe
+
+
+
