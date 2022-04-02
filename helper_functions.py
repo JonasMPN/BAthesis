@@ -5,7 +5,6 @@ import shutil
 import glob
 import ast
 import datetime
-from warnings import warn
 
 import pandas as pd
 import torch
@@ -198,6 +197,25 @@ class Helper():
         for param, value in series.items():
             row_dict[param] = value[0]
         return row_dict
+
+    @staticmethod
+    def str_list2value(str, idx):
+        return ast.literal_eval(str)[idx]
+
+    @staticmethod
+    def save_parameters(working_dir: str, **kwargs):
+        file = working_dir + "/parameters.dat"
+        try:
+            df_parameters = pd.read_csv(file, index_col=None)
+            last_set = df_parameters["index_experiment"].max()
+        except FileNotFoundError:
+            df_parameters = pd.DataFrame()
+            last_set = 0
+        df_new_set = pd.DataFrame({param: pd.Series(values) for param, values in kwargs.items()}, index=None)
+        df_new_set["index_experiment"] = [last_set + 1 for _ in range(df_new_set.shape[0])]
+        df_parameters = pd.concat([df_parameters, df_new_set], ignore_index=True)
+        df_parameters.to_csv(file, index=False)
+
 
 def create_directory(
         directory: str,

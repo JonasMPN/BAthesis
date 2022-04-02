@@ -23,33 +23,38 @@ class EvaluationRig(PredictionEvaluator):
             self.df_protocol = pd.DataFrame()
 
     def evaluate_predictions(self, ignore_params: list[str]):
-        evaluation = {"mean_ap": list(), "mean_distance": list(), "no_detections": list()}
+        evaluation = {"dir_test": list(), "mean_ap": list(), "mean_distance": list(), "mean_distance_normalised":
+                      list(), "no_detections":list()}
         tmp_ids = self.orders.get_all_parents_dir_idx("test")[0]
         file_additional_info = self.dir_root + f"/data/{tmp_ids['data']}/imgsInformation.dat"
         additional_params = pd.read_csv(file_additional_info).columns.tolist()
-        additional_params = [param for param in additional_params if param != "vortex_distance"]  # todo hardcoded
+        additional_params = [param for param in additional_params if param != "vortexDistance"]  # todo hardcoded
         for param in self.orders.get_all_params() + additional_params:
             if param not in ignore_params:
                 evaluation[param] = list()
 
+        already_evaluated = self.df_protocol["dir_test"].max()
         n_evaluation_orders = self.orders.get_number_of_orders("test")
         for idx_evaluate, dir_ids in enumerate(self.orders.get_all_parents_dir_idx("test")):
+            if dir_ids["test"] <= already_evaluated:
+                print(f"Already evaluated test directory {dir_ids['test']}.")
+                continue
             helper.print_progress(idx_evaluate, n_evaluation_orders, "Evaluating")
+            evaluation["dir_test"].append(dir_ids["test"])
 
             file_additional_info = self.dir_root + f"/data/{dir_ids['data']}/imgsInformation.dat"
             additional_info = self.__mean_additional_information(pd.read_csv(file_additional_info, index_col=None))
             evaluation_values = self.__evaluate_dir_ids(dir_ids)
             param_values = self.orders.get_full_params_from_dir_ids(dir_ids)
             for param in copy(param_values).keys():
-                if param in ignore_params:
+                if param in ignore_params or "dir" in param:
                     param_values.pop(param)
 
-            for param in copy(param_values).keys():
-                if "dir" in param:
-                    param_values.pop(param)
             for param, value in (evaluation_values | additional_info | param_values).items():
                 evaluation[param].append(value)
-        pd.DataFrame(evaluation).to_csv(self.file_protocol, index=False)
+        df_new_eval = pd.DataFrame(evaluation)
+        self.df_protocol = pd.concat([self.df_protocol, df_new_eval], ignore_index=True)
+        self.df_protocol.to_csv(self.file_protocol, index=False)
 
     def compare(self,
                 save_directory: str,
@@ -126,7 +131,15 @@ class EvaluationRig(PredictionEvaluator):
         self.set_truth(file_bbox)
         self.set_predictions(prediction_file)
         mean_ap, mean_distance = self.get_all_criteria_mean()
-        return {"mean_ap": mean_ap, "mean_distance": mean_distance[0], "no_detections": mean_distance[1]}
+        if self.orders.get_value_for(dir_ids, "plotType") == "vec":
+            pixels = helper.str_list2value(self.orders.get_value_for(dir_ids, "size"),0)
+        elif self.orders.get_value_for(dir_ids, "plotType") == "col":
+            pixels = helper.str_list2value(self.orders.get_value_for(dir_ids, "nInfoPerAxis"), 0)
+        else:
+            raise NotImplementedError(f"plotType cannot be something else than vec or col.")
+        mean_distance_normalised = mean_distance[0]/pixels
+        return {"mean_ap": mean_ap, "mean_distance": mean_distance[0], "mean_distance_normalised":
+            mean_distance_normalised, "no_detections": mean_distance[1]}
 
     def __mean_additional_information(self, df_additional_information: pd.DataFrame) -> dict:
         averaged = dict()

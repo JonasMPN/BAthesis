@@ -305,7 +305,7 @@ class HamelOseenVortexCreator:
         self.n_local_noise_areas = row["nLocalNoiseAreas"]
         self.n_vortices_per_img = ast.literal_eval(row["vorticesImage"])
 
-        self.vortex_distance = row["vortex_distance"]
+        self.vortex_distance = row["vortexDistance"]
         self.center_distance = self.bbox_size_fac * self.vortex_distance
         self.background_truth = np.zeros((self.n_information_per_axis_x * self.n_information_per_axis_y))
         self.__set_seeds(row["seed"])
@@ -597,7 +597,7 @@ class Orders:
         return len(self._full_orders[order_type])
 
     def get(self, order_type: str, return_type: str = "dict") -> list[dict] or list[str]:
-        """Returns all the orders of an order_type. This function is meant to be used in combination with an 'in'
+        """Returns all the orders of an order_type. This function is meant to be used in combination with an iter
         statement. If done so, every yielded object of the iterator is of type 'return_type'."""
         accepted_order_types = ["data", "train", "test"]
         if order_type not in accepted_order_types:
