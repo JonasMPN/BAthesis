@@ -87,7 +87,7 @@ class HamelOseenVortexCreator:
                 bboxes = list()
                 bbox_list_plot = list()
                 center_list = [0.4 * self.rn_center.random(2) + 0.3]
-                for _ in range(self.rn_choice.choice(self.n_vortices_per_img) - 1):
+                for n_vortices in range(self.rn_choice.choice(self.n_vortices_per_img) - 1):
                     if self.vortex_distance is not None:
                         angle = 2 * np.pi * self.rn_angle_center.random()
                         center_list.append([center_list[0][0] + self.center_distance * np.cos(angle),
@@ -126,7 +126,8 @@ class HamelOseenVortexCreator:
                 img_info = ({"distance": self.vortex_distance,
                              "homogeneous_noise": homogeneous_noise,
                              "local_noise": local_noise,
-                             "local_noise_area": local_noise_area_covered})
+                             "local_noise_area": local_noise_area_covered,
+                             "n_vortices": n_vortices})
                 df_bbox = df_bbox.append(helper.merge_list_of_dicts(bboxes), ignore_index=True)
                 df_info = df_info.append(img_info, ignore_index=True)
                 df_bbox.to_csv(self.file_bbox, index=False),
@@ -384,11 +385,11 @@ class HamelOseenVortexCreator:
             im.save(bbox_dir + f"{index}.png")
 
 
-class ExperimentalData:
+class NonAnalyticalData:
     def __init__(self):
         pass
 
-    def experimental_mat_data(
+    def plot_mat(
             self,
             file: str,
             percentage_information_x_axis: float,
@@ -654,6 +655,23 @@ class Orders:
         df_filtered = self._df_dir_ids.drop(child_order_types, axis=1)
         df_filtered = df_filtered.drop_duplicates(subset=order_type)
         return self.__df_to_list_of_dicts(df_filtered)
+
+    def get_parent_dir_idx(self, child_id: dict) -> dict:
+        """
+        Solves the task: 5 order_types, in the data_base for the 4th there is a row with dir_{3rd order_type}=x. Now
+        you want to know which dir_ids (from the 1st and 2nd order_type) belong to that row.
+        :param child_id: {{first_parent_order_type}: {dir_id}
+        :return: dir_order_types as keys and their indices as values
+        """
+        last_order_type = next(iter(child_id))
+        prior_order_types = self.__get_parent_order_types(last_order_type)[::-1]
+        parent_dir_idx = child_id
+        dir_id = list(child_id.values())[0]
+        for id, order_type in enumerate([last_order_type]+prior_order_types[:-1]):
+            df_parent = self.df_databases[order_type]
+            dir_id = df_parent[f"dir_{prior_order_types[id]}"][dir_id]
+            parent_dir_idx[prior_order_types[id]] = int(dir_id)
+        return parent_dir_idx
 
     def get_params(self, order_type, primary: bool=True, secondary: bool=True) -> list[str]:
         params = list()

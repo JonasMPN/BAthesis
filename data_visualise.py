@@ -1,6 +1,5 @@
 from typing import List
 
-import numpy as np
 import data_prep as prep
 from helper_functions import Helper
 from PIL import Image, ImageDraw

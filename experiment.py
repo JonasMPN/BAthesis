@@ -7,14 +7,14 @@ import datetime
 helper = Helper()
 
 workload = {
-    "creation": True,
-    "train": True,
-    "test_after_train": True,
+    "creation": False,
+    "train": False,
+    "test_after_train": False,
     "test": False,
     "visualisation": False,
     "evaluation": False,
     "post_visualisation": False,
-    "compare": False,
+    "compare": True,
     "turn_off_when_done": False
 }
 
@@ -54,7 +54,7 @@ plot_type = ["col"]  # "vec" (vector) or "col" (colour)
 img_size = [[600,600]]  # (width, height)
 n_images = [261]
 bbox_size_fac = [0.2]
-n_information_per_axis = [[50, 50], [100,100], [300, 300]]
+n_information_per_axis = [[25, 25], [50, 50], [100,100], [200,200], [300, 300], [400, 400], [500,500], [600,600]]
 n_vortices_per_img = [[2]]
 noise_fac = [0, 3]
 local_noise_fac = [0, 3]
@@ -74,11 +74,16 @@ true_positive_threshold = [0.75]
 true_negative_better = "above"
 early_stopper_criteria = "distance"  # or ap
 
-compare_param = "arrowheadWanted"
+handle_additional_information = {
+    "all": "mean",
+    "n_vortices": "sum"
+}
+
+compare_param = "nInfoPerAxis"
 criteria = {"mean_ap": "bigger"}
-result_cols = ["mean_distance_normalised", "no_detections", "epochs"]
-mean_cols = ["mean_distance_normalised", "no_detections", "epochs"]
-ignore_cols = ["mean_distance", "stoppedBy", "size", "plotType"]
+result_cols = ["mean_distance_normalised", "not_detected_normalised", "epochs"]
+mean_cols = ["mean_distance_normalised", "not_detected_normalised", "epochs"]
+ignore_cols = ["stoppedBy", "arrowheadWanted", "size", "plotType"]
 plot_as_compare = ["bar"]
 
 working_dir = root+"/"+data_dir
@@ -134,11 +139,12 @@ if workload["creation"]:
 
 if prep_experimental_data:
     dir_experimental_data = "D:/Jonas/Studium/TU/Semester/Bachelor/pythonProject/exercise_object_detection/data_experimental"
+    real_life_data = prep.NonAnalyticalData()
     for file in exp_data_files:
         print(f"Preparing {file}.")
-        prep.experimental_mat_data(file=dir_experimental_data+f"/{file}", plot_as=plot_as, normalise=normalise,
-                                   mean=mean, percentage_information_x_axis=percentage_information_x_axis,
-                                   percentage_information_y_axis=percentage_information_y_axis)
+        real_life_data.plot_mat(file=dir_experimental_data+f"/{file}", plot_as=plot_as, normalise=normalise,
+                                mean=mean, percentage_information_x_axis=percentage_information_x_axis,
+                                percentage_information_y_axis=percentage_information_y_axis)
 
 
 if add_train_bbox or add_test_bbox:
@@ -180,7 +186,8 @@ if workload["evaluation"]:
     eval_rig.set_threshold(criteria=true_positive_criteria,
                            above_or_below=true_negative_better,
                            value=true_positive_threshold[0])
-    eval_rig.evaluate_predictions(["noiseFac", "localNoiseFac", "nLocalNoiseAreas", "valInfo", "maxEpochs"])
+    eval_rig.evaluate_predictions(handle_additional_information, ["noiseFac", "localNoiseFac", "nLocalNoiseAreas",
+                                                                 "valInfo", "maxEpochs"])
 
 if workload["post_visualisation"]:
     vis = post.PostVisualisation(dir_results=working_dir+"/results_vis", protocol_file=file_protocol,

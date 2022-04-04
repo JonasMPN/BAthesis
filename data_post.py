@@ -191,7 +191,7 @@ class PostVisualisation():
          this combination exists for all unique values of the parameter col. If so, save the combination as a key in
          a dict and the indices of the rows as the value"""
         non_parameter_cols = list() if non_parameter_cols is None else non_parameter_cols
-        df_filtered = self.df_original.drop([col for col in non_parameter_cols+[criteria_col]], axis=1)
+        df_filtered = self.df_original.drop([non_parameter_cols+[criteria_col]], axis=1)
         unique_values = self.df_original[parameter].unique().tolist()
         idx_species = dict()
         for id, series_row in df_filtered.iterrows():
@@ -239,19 +239,3 @@ class PostVisualisation():
             else:
                 query += f"{param}=={value} and "
         return query[:-5]
-
-
-# import pandas as pd
-# import ast
-# df = pd.read_csv(file, index_col=None)
-# new_df = pd.DataFrame()
-# for _, row in df.iterrows():
-#     if row["plotType"] == "vec":
-#         row["normalised_distance"] = row["mean_distance"]/ast.literal_eval(row["size"])[0]*100
-#     elif row["plotType"] == "col":
-#         row["normalised_distance"] = row["mean_distance"]/ast.literal_eval(row["nInfoPerAxis"])[0]*100
-#     new_df = new_df.append(row)
-# cols = new_df.columns.to_list()
-# cols = cols[:2] + [cols[-1]] + cols[2:-1]
-# new_df = new_df[cols]
-# new_df.to_csv(root+"/normalised_distance.dat", index=None)
