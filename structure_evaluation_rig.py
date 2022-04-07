@@ -25,7 +25,7 @@ class EvaluationRig(PredictionEvaluator):
             self.df_protocol = pd.DataFrame()
             self.already_evaluated = -1
 
-    def evaluate_predictions(self, handle_additional_information: dict, ignore_params: list[str], all: bool=True):
+    def predictions(self, handle_additional_information: dict, ignore_params: list[str], all: bool=True):
         """
 
         :param ignore_params:
@@ -174,17 +174,23 @@ class EvaluationRig(PredictionEvaluator):
 
         self.set_truth(file_bbox)
         self.set_predictions(prediction_file)
-        mean_ap, mean_distance = self.get_all_criteria_mean()
+        self.set_assignment(criteria=self.orders.get_value_for(dir_ids, "assignCriteria"),
+                            better=self.orders.get_value_for(dir_ids, "assignBetter"),
+                            threshold=self.orders.get_value_for(dir_ids, "assignTpThreshold"))
+        self.set_prediction_criteria(criteria=self.orders.get_value_for(dir_ids, "predictionCriteria"),
+                                     better=self.orders.get_value_for(dir_ids, "predictionBetter"),
+                                     threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
+        results, n_detected = self.get_all_criteria()
         if self.orders.get_value_for(dir_ids, "plotType") == "vec":
             width = helper.str_list2value(self.orders.get_value_for(dir_ids, "size"),0)
         elif self.orders.get_value_for(dir_ids, "plotType") == "col":
             width = helper.str_list2value(self.orders.get_value_for(dir_ids, "nInfoPerAxis"), 0)
         else:
             raise NotImplementedError(f"plotType cannot be something else than vec or col.")
-        mean_distance_normalised = mean_distance[0]/width
-        not_detected_normalised = mean_distance[1]/n_vortices
-        return {"mean_ap": mean_ap, "mean_distance_normalised": mean_distance_normalised,
-                "not_detected_normalised": not_detected_normalised}
+        mean_distance_normalised = results["distance"]/width
+        detected_normalised = n_detected/n_vortices
+        return {"mean_ap": results["ap"], "mean_distance_normalised": mean_distance_normalised,
+                "detected_normalised": detected_normalised}
 
     def __handle_additional_information(self, df_additional_information: pd.DataFrame, handle_dict: dict) -> dict:
         handled = dict()
