@@ -17,9 +17,9 @@ class TestRig(util_model):
         self.orders = orders
         self.dir_root = root_dir
 
-    def test_all(self,
-                 num_classes: int = 2,
-                 transform=None):
+    def all(self,
+        num_classes: int = 2,
+        transform=None):
         transform = transform if transform is not None else self.get_transform(False)
         n_test_orders = self.orders.get_number_of_orders("test")
         for idx_test, dir_ids in enumerate(self.orders.get_all_parents_dir_idx("test")):
@@ -60,11 +60,11 @@ class TestRig(util_model):
         file_bbox = current_data_dir + "/bbox.dat"
         prediction_file = dir_test + "/predictions.dat"
 
-        n_train = self.orders.get_value_for(dir_ids, "nTrainImgs")
-        val_info = ast.literal_eval(self.orders.get_value_for(dir_ids, "valInfo"))
+        n_train = self.orders.get_value_for(dir_ids, "nImgTrain")
+        val_info = ast.literal_eval(self.orders.get_value_for(dir_ids, "validationInfo"))
         n_val = val_info[0]*val_info[1]
         n_train_val = n_train+n_val
-        n_test = n_train_val+self.orders.get_value_for(dir_ids, "nTestImgs")
+        n_test = n_train_val+self.orders.get_value_for(dir_ids, "nImgTest")
         data_set = CustomDataset(dir_data_set, file_bbox, (n_train_val, n_test), transform)
 
         model = self.get_model(num_classes)
@@ -107,11 +107,11 @@ class TestRig(util_model):
     def __predictions_to_df_dict(predictions) -> dict:
         first_key = [*predictions][0]
         prediction_criteria = list(predictions[first_key].keys())
-        predictions_for_df = {column: list() for column in ["img_idx"]+prediction_criteria}
+        predictions_for_df = {column: list() for column in ["img_ids"]+prediction_criteria}
         for img_idx in predictions.keys():
             for prediction_criteria, values in predictions[img_idx].items():
                 predictions_for_df[prediction_criteria] += values
             for _ in range(len(values)):
-                predictions_for_df["img_idx"].append(img_idx)
+                predictions_for_df["img_ids"].append(img_idx)
         return predictions_for_df
 
