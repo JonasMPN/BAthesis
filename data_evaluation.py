@@ -47,7 +47,13 @@ class BoundingBoxEvaluator:
 class PredictionEvaluator(BoundingBoxEvaluator):
     def __init__(self):
         BoundingBoxEvaluator.__init__(self)
-        self.threshold = None
+        self.assignment = None
+        self.prediction = None
+        self.prediction_score_threshold = None
+        self.df_truth = None
+        self.df_predictions = None
+        self.df_filtered_predictions = None
+        self.implemented_criteria = ["ap", "distance", "labels"]
 
     def set_predictions(self, predictions: str or pd.DataFrame):
         if type(predictions) == str:
@@ -63,178 +69,194 @@ class PredictionEvaluator(BoundingBoxEvaluator):
         elif type(truth) == pd.DataFrame:
             self.df_truth = truth
         else:
-            raise TypeError(f"'predictions' must either be a string of the file path or a pandas data frame")
+            raise TypeError(f"'truth' must either be a string of the file path or a pandas data frame")
 
-    def set_threshold(self, criteria: str, above_or_below: str, value: float):
-        """Threshold on which will be decided if the prediction is a true or false positive."""
-        self.threshold = dict()
-        implemented_criteria = ["IoU", "distance"]
-        accepted_aob = ["above", "below"]
-        if criteria not in implemented_criteria:
+    def set_assignment(self, criteria: str, better: str, threshold: float):
+        """Defines the way the prediction bboxes are assigned to the truth bboxes. Each prediction is assigned to
+        the truth box with which it has the best ('better') 'criteria' value. 'threshold' is used to decide whether
+        it is a true positive or a false positive."""
+        implemented_criteria_function = {"IoU": self.get_IoU, "distance": self.get_core_distance}
+        accepted_better = ["above", "below"]
+        if criteria not in implemented_criteria_function:
             raise NotImplementedError(f"Criteria {criteria} is not implemented. Implemented criteria are "
-                                      f"{implemented_criteria}.")
-        if above_or_below not in accepted_aob:
-            raise ValueError(f"'above_or_below' must be one of '[above, below]' but was {accepted_aob}.")
-        self.threshold["criteria"] = criteria
-        self.threshold["type"] = above_or_below
-        self.threshold["value"] = value
+                                      f"{implemented_criteria_function.keys()}.")
+        if better not in accepted_better:
+            raise ValueError(f"'above_or_below' must be one of '[above, below]' but was {better}.")
 
-    def get_criteria_mean(self, criteria: str or list[str]) -> float or np.ndarray:
-        """Criteria might be 'ap' or 'distance'."""
-        implemented_early_stopper_criteria = {"ap": self.__get_mean_of_ap,
-                                              "distance": self.__get_mean_core_distance}
-        assert criteria in implemented_early_stopper_criteria.keys(), \
-            f"Not implemented early stopper criteria {criteria}. Implemented are" \
-            f" {list(implemented_early_stopper_criteria.keys())}."
-        criteria_mean = implemented_early_stopper_criteria[criteria]
-        return criteria_mean()
+        self.assignment = {
+            "criteria_function": implemented_criteria_function[criteria],
+            "better": max if better == "above" else min,
+            "threshold": threshold
+        }
 
-    def get_all_criteria_mean(self) -> tuple[float or np.ndarray, float or np.ndarray]:
+    def set_prediction_criteria(self, criteria: str, better: str, threshold: float):
+        """
+        Defines which predictions are used in the test and validation phase. Because only these predictions are used
+        in a real-world environment they are also used for the criteria 'distance' and 'labels'.
+        :param criteria: Must be a parameter that is associated with each prediction on its own. Therefore,
+        it must be a column of the dataframe that is set with 'set_predictions'.
+        :param better:
+        :param threshold:
+        :return:
+        """
+        possible_criteria_param = ["score"] # todo hardcoded. Should be the columns from the prediction dataframe
+        accepted_better = ["above", "below"]
+        if criteria not in possible_criteria_param:
+            raise NotImplementedError(f"Criteria {criteria} is not implemented. Implemented criteria are "
+                                      f"{possible_criteria_param}.")
+        if better not in accepted_better:
+            raise ValueError(f"'above_or_below' must be one of '[above, below]' but was {better}.")
+        self.prediction = {
+            "criteria_param": criteria,
+            "better": max if better == "above" else min,
+            "threshold": threshold
+        }
+
+    def get(self, criteria: list[str]) -> tuple[dict, int]:
+        """
+        Criteria might be 'ap', 'distance' or 'labels'.
+        'ap' will be calculated over all predictions.
+        'distance' and 'labels' will be calculated only for predictions which scores are above the threshold.
+        :param criteria:
+        :return:
+        """
+        assert self.assignment is not None, "Use 'set_assignment' before any type of evaluation."
+        assert self.prediction is not None, "Use 'set_prediction_criteria' before any type of evaluation."
+        for crit in criteria:
+            if crit not in self.implemented_criteria:
+                raise ValueError(f"Not implemented criteria {crit}. Implemented are {self.implemented_criteria}.")
+        results = {
+            "ap": list(),
+            "distance": list(),
+            "labels": dict()
+        }
+        n_detected = 0
+        for img_idx in self.df_predictions["img_ids"].unique():
+            df_tmp_predictions = self.df_predictions.loc[self.df_predictions["img_ids"] == img_idx]
+            bboxes_truth, _ = helper.pd_row2(self.df_truth, img_idx, "list")
+            info_prediction = helper.df_predictions_to_list(df_tmp_predictions, self.prediction["criteria_param"])
+            assignment, prediction_filtered_assignment, n_new_detected = self.__get_assignments(bboxes_truth,
+                                                                                           info_prediction)
+            n_detected += n_new_detected
+            if "ap" in criteria:
+                labels, scores = self.__assign_label(assignment)
+                if np.count_nonzero(labels) >= 1:
+                    results["ap"].append(average_precision_score(labels, scores))
+                else:
+                    results["ap"].append(0)
+            if len(prediction_filtered_assignment) != 0: # else there are no predictions that are better than the score threshold
+                if "distance" in criteria:
+                    mean_core_distance = self.__get_mean_distance(prediction_filtered_assignment)
+                    if mean_core_distance is not None:
+                        results["distance"].append(mean_core_distance)
+                if "labels" in criteria:
+                    results["labels"][img_idx] = list()
+                    img_labels, _ = self.__assign_label(prediction_filtered_assignment)
+                    for label, bbox_pairs in zip(img_labels, prediction_filtered_assignment.values()):
+                        for bbox_pair in bbox_pairs:
+                            results["labels"][img_idx].append([label, bbox_pair[1]])
+        for crit in ["ap", "distance"]:
+            results[crit] = np.mean(results[crit]) if len(results[crit]) != 0 else None
+        return results, n_detected
+
+    def get_all_criteria(self) -> tuple[dict, int]:
         """Returns mean of ap and mean of core distance"""
-        return self.__get_mean_of_ap(), self.__get_mean_core_distance()
-
-    def get_labels(self) -> dict:
-        criteria_function_available = {"IoU": self.get_IoU}
-        criteria_function = criteria_function_available[self.threshold["criteria"]]
-        predictions_labeled = dict()
-        for img_idx in self.df_predictions["img_idx"].unique():
-            predictions_labeled[img_idx] = list()
-            df_tmp_predictions = self.df_predictions.loc[self.df_predictions["img_idx"] == img_idx]
-            bboxes_truth, _ = helper.pd_row2(self.df_truth, img_idx, "list")
-            info_prediction = helper.df_predictions_to_list(df_tmp_predictions)
-            assignment = self.__get_assignments(bboxes_truth, info_prediction, criteria_function)
-            img_labels, _ = self.__assign_label(assignment)
-            for label, bbox_pairs in zip(img_labels, assignment.values()):
-                for bbox_pair in bbox_pairs:
-                    prediction_number = bbox_pair[1]
-                    predictions_labeled[img_idx].append((label, info_prediction[prediction_number][1]))
-        return predictions_labeled
-
-    def __get_mean_of_ap(self) -> np.ndarray:
-        assert type(self.threshold) is not None, "'threshold' is not initialised. Use 'set_threshold' before using " \
-                                                 "'get_mean_of_ap'."
-        criteria_function_available = {"IoU": self.get_IoU}
-        criteria_function = criteria_function_available[self.threshold["criteria"]]
-        average_precision = list()
-        for img_idx in self.df_predictions["img_idx"].unique():
-            df_tmp_predictions = self.df_predictions.loc[self.df_predictions["img_idx"] == img_idx]
-            bboxes_truth, _ = helper.pd_row2(self.df_truth, img_idx, "list")
-            info_prediction = helper.df_predictions_to_list(df_tmp_predictions)
-            assignment = self.__get_assignments(bboxes_truth, info_prediction, criteria_function)
-            labels, scores = self.__assign_label(assignment)
-            if np.count_nonzero(labels) > 1:
-                average_precision.append(average_precision_score(labels, scores))
-            else:
-                average_precision.append(0)
-        return np.mean(average_precision)
-
-    def __get_mean_core_distance(self):
-        assert type(self.threshold) is not None, "'threshold' is not initialised. Use 'set_threshold' before using " \
-                                                 "'get_mean_core_distance'."
-        criteria_function_available = {"IoU": self.get_IoU}
-        criteria_function = criteria_function_available[self.threshold["criteria"]]
-        mean_core_distances, n_imgs_no_detection = list(), 0
-        for img_idx in self.df_predictions["img_idx"].unique():
-            df_tmp_predictions = self.df_predictions.loc[self.df_predictions["img_idx"] == img_idx]
-            bboxes_truth, _ = helper.pd_row2(self.df_truth, img_idx, "list")
-            info_prediction = helper.df_predictions_to_list(df_tmp_predictions)
-            assignment = self.__get_assignments(bboxes_truth, info_prediction, criteria_function)
-            mean_core_distance = self.__get_mean_distances_of_true_positives(assignment, bboxes_truth, img_idx)
-            if mean_core_distance is not None:
-                mean_core_distances.append(mean_core_distance)
-            else:
-                n_imgs_no_detection += 1
-        return np.mean(mean_core_distances), n_imgs_no_detection
+        return self.get(self.implemented_criteria)
 
     def __get_assignments(self,
                           bboxes_truth: list[list],
-                          info_prediction: list[tuple[float, list]],
-                          criteria_function) -> dict:
+                          info_prediction: list[tuple[float, list]]) -> tuple[dict, dict, int]:
         """Per image. Returns: {criteria_value: ([truth_bbox_id, pred_bbox_id], [], ...), ...)
         bboxes_truth: [[bbox1], [bbox2], ...]
-        info_prediction: [(score_bbox1, [bbox1]), (score_bbox2, [bbox2]), ...]
+        info_prediction: [(prediction_criteria_value1, [bbox1]), (prediction_criteria_value1, [bbox2]), ...]
         criteria_function: function that takes one truth bboxes and one prediction bbox as input."""
-        needed_keys, fixed_assignments = ["type", "value"], list()
-        if not all(key in list(self.threshold.keys()) for key in needed_keys):
-            raise ValueError(f"Parameter 'self.threshold' needs to be a dict with keys {needed_keys} but were "
-                             f" {list(self.threshold.keys())}.")
-        extreme = min if self.threshold["type"] == "below" else max
-        self.threshold_value = self.threshold["value"] if self.threshold["value"] is not None else extreme([0, 10e10])
-        prediction_numbered = {tuple(bbox_information[1]): i for i, bbox_information in enumerate(info_prediction)}
-        df_assignment = pd.DataFrame(columns=["value", "bbox_pair"])
-
-        iter_prediction = prediction_numbered
-        for id_truth_bbox, bbox_truth in enumerate(bboxes_truth):
-            for bbox_prediction, id_prediction_bbox in copy(iter_prediction).items():
-                value = criteria_function(bbox_prediction, bbox_truth)
-                df_assignment = df_assignment.append({"value": value, "bbox_pair": (id_truth_bbox, id_prediction_bbox)},
-                                                     ignore_index=True)
-
-                case_1 = self.threshold["type"] == "above" and value >= self.threshold_value
-                case_2 = self.threshold["type"] == "below" and value <= self.threshold_value
-                if case_1 or case_2:  # prediction has fixed assigned truth bbox. No need to check that pred bbox in
-                    # the future
-                    iter_prediction.pop(bbox_prediction)
-        return self.__clean_threshold_assignments(df_assignment, extreme)
+        assignment_better, assignment_tp_threshold = self.assignment["better"], self.assignment["threshold"]
+        assign_criteria_function = self.assignment["criteria_function"]
+        prediction_better, prediction_threshold = self.prediction["better"], self.prediction["threshold"]
+        prediction_numbered = {tuple(bbox_information[1]): bbox_information[0] for bbox_information in info_prediction}
+        df_assignment = pd.DataFrame(columns=["value", "bbox_pair", "prediction_score"])
+        df_filtered_predictions = pd.DataFrame(columns=["value", "bbox_pair", "prediction_score"])
+        for bbox_truth in bboxes_truth:
+            for bbox_prediction, prediction_score in copy(prediction_numbered).items():
+                value = assign_criteria_function(bbox_prediction, bbox_truth)
+                to_append = {"value": value, "bbox_pair": (bbox_truth, bbox_prediction), "score": prediction_score}
+                if prediction_better(prediction_threshold, prediction_score) == prediction_score:
+                    df_filtered_predictions = df_filtered_predictions.append(to_append, ignore_index=True)
+                df_assignment = df_assignment.append(to_append, ignore_index=True)
+                if assignment_better(assignment_tp_threshold, value) == value:  # prediction has fixed assigned truth
+                    #  bbox. No need to check that pred bbox in the future
+                    prediction_numbered.pop(bbox_prediction)
+        return self.__clean_threshold_assignments(df_assignment)
 
     def __assign_label(self,
                        assignment: dict) -> tuple[list, list]:
         """If the criteria value is above/below a certain threshold, the prediction will be labeled as true positive,
         else as false positive."""
         labels, scores = list(), list()
-        threshold_type, threshold_value = self.threshold["type"], self.threshold["value"]
-        for criteria_value in assignment.keys():
-            case_1 = threshold_type == "above" and criteria_value >= threshold_value
-            case_2 = threshold_type == "below" and criteria_value <= threshold_value
-            labels.append(1 if case_1 or case_2 else 0)
-            scores.append(criteria_value)
+        assign_better = self.assignment["better"]
+        assign_tp_threshold = self.assignment["threshold"]
+        for assign_criteria_value, bbox_information in assignment.items():
+            for bbox_pair in bbox_information:
+                prediction_score = bbox_pair[1]
+                labels.append(1 if assign_better(assign_criteria_value, assign_tp_threshold) == assign_criteria_value else 0)
+                scores.append(prediction_score)
         return labels, scores
 
-    def __get_mean_distances_of_true_positives(self, assignment: dict, bboxes_truth: list[list[float]],
-                                               img_idx: int) -> np.ndarray or None:
-        bboxes_truth_numbered = {i: bbox for i, bbox in enumerate(bboxes_truth)}
+    def __get_mean_distance(self, assignment: dict) -> np.ndarray or None:
         distances = list()
-        df_predictions = self.df_predictions.loc[self.df_predictions["img_idx"] == img_idx]
-        df_predictions = df_predictions.reset_index(drop=True)
-        for threshold_value, bbox_pairs in assignment.items():
-            if threshold_value >= self.threshold["value"]:
-                for bbox_pair in bbox_pairs:
-                    bbox_truth = bboxes_truth_numbered[bbox_pair[0]]
-                    bbox_prediction = df_predictions.loc[bbox_pair[1]]["bbox"]
-                    distances.append(self.get_core_distance(bbox_truth, bbox_prediction))
-        distances = np.mean(distances) if len(distances) > 0 else None
-        return distances
+        if len(assignment) == 0:
+            return None
+        for assign_criteria_value, bbox_information in assignment.items():
+            for bbox_pair in bbox_information:
+                distances.append(self.get_core_distance(bbox_pair[0], bbox_pair[1]))
+        mean_distance = np.mean(distances)
+        return mean_distance
 
-    @staticmethod
-    def __clean_threshold_assignments(df_assignment: pd.DataFrame, extreme_function) -> dict:
+    def __clean_threshold_assignments(self, df_assignment: pd.DataFrame) -> tuple[dict, dict, int]:
         """
         Returns a dict in which the keys are the criteria value and the values are a list of tuples of the
         combination of the prediction id and the truth id.
-        :param assignment_dict:
-        :param fixed_couple: (id_truth_bbox, id_prediction_bbox)
+        :param df_assignment:
+        :param best_function:
         :return:
         """
+        assign_better, assign_tp_threshold = self.assignment["better"], self.assignment["threshold"]
+        prediction_better, prediction_threshold = self.prediction["better"], self.prediction["threshold"]
         break_loop_at, counter = 10e3, 0
         fixed_assignments = dict()
+        fixed_filtered_assignments = dict()
+        tp_bbox = list()
         while df_assignment.shape[0] > 0:
-            best_value = extreme_function(df_assignment["value"].unique().tolist())
+            best_value = assign_better(df_assignment["value"].unique().tolist())
             fixed_assignments[best_value] = list()
+            fixed_filtered_assignments[best_value] = list()
             best_row_ids = df_assignment.loc[df_assignment["value"] == best_value].index.tolist()
-            rows_to_drop, used_prediction_id = list(), list()
-            for best_row_idx in best_row_ids:
-                fixed_assignment = df_assignment.loc[best_row_idx]["bbox_pair"]
-                if fixed_assignment[1] in used_prediction_id:
+            rows_to_drop, used_prediction_bbox = list(), list()
+            for row_idx in best_row_ids:
+                row = df_assignment.loc[row_idx]
+                fixed_assignment, prediction_score= row["bbox_pair"], row["score"]
+                truth_bbox, pred_bbox = fixed_assignment[0], fixed_assignment[1]
+                if pred_bbox in used_prediction_bbox:
                     continue
                 else:
-                    used_prediction_id.append(fixed_assignment[1])
-                fixed_assignments[best_value].append(fixed_assignment)
+                    used_prediction_bbox.append(pred_bbox)
+
+                if prediction_better(prediction_score, prediction_threshold) == prediction_score:
+                    fixed_filtered_assignments[best_value].append([truth_bbox, list(pred_bbox)])
+                    if assign_better(best_value, assign_tp_threshold) == best_value:
+                        if truth_bbox not in tp_bbox:
+                            tp_bbox.append(truth_bbox)
+
+                fixed_assignments[best_value].append([[truth_bbox, list(pred_bbox)], prediction_score])
                 for row_idx, pair in enumerate(df_assignment["bbox_pair"].tolist()):
-                    if pair[1] == fixed_assignment[1]:
+                    if pair[1] == pred_bbox:
                         rows_to_drop.append(row_idx)
             df_assignment = df_assignment.drop(rows_to_drop)
             df_assignment = df_assignment.reset_index(drop=True)
+            if len(fixed_filtered_assignments[best_value]) == 0:
+                fixed_filtered_assignments.pop(best_value)
             counter += 1
             if counter == break_loop_at:
                 raise ValueError(f"Infinite loop warning. If there are indeed more than break_loop={break_loop_at} "
                                  f"unique truth-prediction assignments then raise the 'break_loop' value.")
-        return fixed_assignments
+        return fixed_assignments, fixed_filtered_assignments, len(tp_bbox)
