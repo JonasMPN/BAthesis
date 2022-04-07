@@ -7,19 +7,19 @@ import datetime
 helper = Helper()
 
 workload = {
-    "creation": False,
-    "train": False,
-    "test_after_train": False,
+    "creation": True,
+    "train": True,
+    "test_after_train": True,
     "test": False,
-    "visualisation": False,
+    "visualisation": True,
     "evaluation": False,
     "post_visualisation": False,
-    "compare": True,
+    "compare": False,
     "turn_off_when_done": False
 }
 
 root = "D:/Jonas/Studium/TU/Semester/Bachelor/pythonProject/vortex_detection"
-data_dir = "col_size_diff"
+data_dir = "pre_large/vec_info_diff"
 file_ending_additional_info = "imgsInformation.dat"
 
 categories = {"worst": [0, 10], "best": [90, 100]}  # 0,10 means the biggest 10% of the data
@@ -44,35 +44,47 @@ percentage_information_x_axis = 20
 percentage_information_y_axis = 20
 exp_data_files = ["UV_VN014.mat", "UV_VN026.mat", "UV_VN035.mat"]
 
-
 add_train_bbox = False
 add_test_bbox = False
 
 order_algorithm = "full_fac"  # can either be 'full_fac' or 'specific'
-arrowhead_wanted = [False]
-plot_type = ["col"]  # "vec" (vector) or "col" (colour)
-img_size = [[600,600]]  # (width, height)
-n_images = [261]
-bbox_size_fac = [0.2]
-n_information_per_axis = [[25, 25], [50, 50], [100,100], [200,200], [300, 300], [400, 400], [500,500], [600,600]]
-n_vortices_per_img = [[2]]
-noise_fac = [0, 3]
-local_noise_fac = [0, 3]
-n_local_noise_areas = [[10]]  # do not set this to 0. If no local noise is desired, set noise_fac to 0
-preset_distance = [0.5, 1.5]  # either a float or None
-seed = [42]
-n_img_train = [100]
-validation_info = [[4, 15]]  # how many subsets of how many pictures
-n_img_test = [100]   # can be at maximum n_images-n_img_train-(validation_info[0][0]*validation_info[0][1])
-batch_size = 8
-max_epochs = [30]
-n_classes = 2
-gamma = [[3,3], [1, 4]]
-time = [[80,90]]
-true_positive_criteria = "IoU"
-true_positive_threshold = [0.75]
-true_negative_better = "above"
-early_stopper_criteria = "distance"  # or ap
+parameters = {
+    "data": {
+        "arrowhead": ["yes"],
+        "plotType": ["vec"],  # "vec" (vector) or "col" (colour)
+        "imgSize": [[600,600]],  # (width, height)
+        "nImg": [261],
+        "bboxSizeFac": [0.2],
+        # "nInfoPerAxis": [[20, 20], [30, 30], [40, 40], [50, 50], [60, 60], [70,70], [80,80], [90,90], [100, 100]],
+        "nInfoPerAxis": [[40, 40]],
+        "nVortices": [[1,2]],
+        "noiseFac": [0],
+        "localNoiseFac": [0],
+        "nLocalNoiseAreas": [[10]],  # do not set this to 0. If no local noise is desired, set noise_fac to 0
+        "presetDistance": [1], # either a float or None
+        "randRotDir": "no", # if 'no': rotation direction alternates everytime a vortex is created
+        "seed": [42],
+        "gamma": [[3,3]],
+        "time": [[80,90]],
+        "ignore": [["plotType", ["col", "arrowheadWanted", "size"]]]
+    },
+    "train": {
+        "nImgTrain": [100],
+        "validationInfo": [[3, 20]],  # how many subsets of how many pictures
+        "maxEpochs": [30],
+        "earlyStopperCriteria": ["distance"],  # or ap,
+        "predictionCriteria": ["score"],
+        "predictionThreshold": [0.75], # which predictions to use for the calculation of the distances and labels,
+        "predictionBetter": ["above"],
+        "assignCriteria": ["distance"],
+        "assignTpThreshold": [0.02],  # which predictions are regarded true positives (using assignCriteria)
+        "assignBetter": ["below"],
+        "secondaryParameters": ["epochs", "stoppedBy"]
+    },
+    "test": {
+        "nImgTest": [100]   # can be at maximum n_images-n_img_train-(validation_info[0][0]*validation_info[0][1])
+    }
+}
 
 handle_additional_information = {
     "all": "mean",
@@ -87,45 +99,15 @@ ignore_cols = ["stoppedBy", "arrowheadWanted", "size", "plotType"]
 plot_as_compare = ["bar"]
 
 working_dir = root+"/"+data_dir
+helper.create_dir(working_dir)
 file_protocol = working_dir+"/protocol.dat"
 file_single_params = working_dir+"/single_params.dat"
-helper.save_parameters(working_dir=working_dir, arrowhead_wanted=arrowhead_wanted, plot_type=plot_type,
-                       img_size=img_size, n_images=n_images, bbox_size_fac=bbox_size_fac,
-                       n_information_per_axis=n_information_per_axis, n_vortices_per_img=n_vortices_per_img,
-                       noise_fac=noise_fac, local_noise_fac=local_noise_fac, n_local_noise_areas=n_local_noise_areas,
-                       preset_distance=preset_distance, seed=seed, n_img_train=n_img_train,
-                       validation_info=validation_info, n_img_test=n_img_test, batch_size=batch_size,
-                       max_epochs=max_epochs, gamma=gamma, time=time, true_positive_criteria=true_positive_criteria,
-                       true_positive_threshold=true_positive_threshold, true_negative_better=true_negative_better,
-                       early_stopper_criteria=early_stopper_criteria)
+files_parameters, current_experiment_idx = helper.save_parameters(working_dir=working_dir, parameters=parameters)
 if any(list(workload.values())):
     print(f"Starting creation of orders, {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     orders = prep.Orders(["data", "train", "test"], working_dir)
-    orders.set_params("data",
-                      plotType=plot_type,
-                      seed=seed,
-                      size=img_size,
-                      nInfoPerAxis=n_information_per_axis,
-                      arrowheadWanted=arrowhead_wanted,
-                      bboxSize=bbox_size_fac,
-                      noiseFac=noise_fac,
-                      localNoiseFac=local_noise_fac,
-                      nLocalNoiseAreas=n_local_noise_areas,
-                      gamma=gamma,
-                      time=time,
-                      nImgs=n_images,
-                      vorticesImage=n_vortices_per_img,
-                      vortexDistance=preset_distance)
-    orders.set_params("train",
-                      nTrainImgs=n_img_train,
-                      valInfo=validation_info,
-                      maxEpochs=max_epochs,
-                      secondary_parameters=["epochs", "stoppedBy"])
-    orders.set_params("test",
-                      nTestImgs=n_img_test,
-                      tpThreshold=true_positive_threshold)
+    orders.set_params_from_files(files=files_parameters, index_experiment=current_experiment_idx)
     file_databases = orders.get_database_files()
-    orders.set_ignore_params_for_order("data", {"plotType": ["col", "arrowheadWanted", "size"]})
     orders.create_orders(order_algorithm)
     orders.conduct_orders()
     print(f"Finished order creation, {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
@@ -146,48 +128,22 @@ if prep_experimental_data:
                                 mean=mean, percentage_information_x_axis=percentage_information_x_axis,
                                 percentage_information_y_axis=percentage_information_y_axis)
 
-
-if add_train_bbox or add_test_bbox:
-    train_or_test = {
-        "train": True if add_train_bbox else False,
-        "test": True if add_test_bbox else False
-    }
-    for width, height in zip(img_height, img_height):
-        for n_vortices in n_vortices_per_img:
-            cwd_path_variables = [{(width, height): None}, {"n_img": n_images}, {"vortices": n_vortices}]
-            dir_imgs = hf.create_directory_from_value(data_dir, cwd_path_variables)
-            for work_type in [[*train_or_test][i] for i in range(2) if train_or_test[[*train_or_test][i]]]:
-                print(f"Adding bounding boxes to the {work_type} data in {dir_imgs}/{work_type}_bbox")
-                prep.add_bboxes(working_dir=root+dir_imgs+"/", train_or_test=work_type,
-                                colour="black" if plot_type == "col" else "green")
-
 if workload["train"]:
-    train_rig = train.TrainRig(orders, working_dir)
-    if len(early_stopper_criteria) != 0:
-        train_rig.set_threshold(criteria=true_positive_criteria,
-                                above_or_below=true_negative_better,
-                                value=true_positive_threshold[0])
-    train_rig.train_all(test_after_train=workload["test_after_train"],
-                        early_stopper_criteria=early_stopper_criteria)
+    train = train.TrainRig(orders, working_dir)
+    train.all(test_after_train=workload["test_after_train"])
 
 if workload["test"]:
-    test_rig = test.TestRig(orders, working_dir)
-    test_rig.test_all()
+    test = test.TestRig(orders, working_dir)
+    test.all()
 
 if workload["visualisation"]:
     vis = Visualise(orders, working_dir)
-    vis.set_threshold(criteria=true_positive_criteria,
-                      above_or_below=true_negative_better,
-                      value=true_positive_threshold[0])
     vis.all()
 
 if workload["evaluation"]:
-    eval_rig = eval.EvaluationRig(orders, working_dir, file_protocol)
-    eval_rig.set_threshold(criteria=true_positive_criteria,
-                           above_or_below=true_negative_better,
-                           value=true_positive_threshold[0])
-    eval_rig.evaluate_predictions(handle_additional_information, ["noiseFac", "localNoiseFac", "nLocalNoiseAreas",
-                                                                 "valInfo", "maxEpochs"])
+    evaluate = eval.EvaluationRig(orders, working_dir, file_protocol)
+    evaluate.predictions(handle_additional_information, ["noiseFac", "localNoiseFac", "nLocalNoiseAreas"," valInfo",
+                                                         "maxEpochs"])
 
 if workload["post_visualisation"]:
     vis = post.PostVisualisation(dir_results=working_dir+"/results_vis", protocol_file=file_protocol,
@@ -198,9 +154,9 @@ if workload["post_visualisation"]:
     #                      amount=amount)
 
 if workload["compare"]:
-    eval_rig = eval.EvaluationRig(orders, working_dir, file_protocol)
+    evaluate = eval.EvaluationRig(orders, working_dir, file_protocol)
     for plot_as in plot_as_compare:
-        eval_rig.compare(save_directory=working_dir+"/results_vis", compare_col=compare_param, criteria=criteria,
+        evaluate.compare(save_directory=working_dir+"/results_vis", compare_col=compare_param, criteria=criteria,
                          result_cols=result_cols, mean_cols=mean_cols, ignore_cols=ignore_cols, plot_as=plot_as)
 
 if workload["turn_off_when_done"]:
