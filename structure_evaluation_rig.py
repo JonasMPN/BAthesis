@@ -135,8 +135,7 @@ class EvaluationRig(PredictionEvaluator):
         n_param_combinations = 0
         counter = 0
         while df_param_combinations.shape[0] > 0:
-            # ids = self.__filter_param_combination(df_param_combinations).index.tolist()
-            ids = [(16*i)+counter for i in range(8)]
+            ids = self.__filter_param_combination(df_param_combinations).index.tolist()
             df_filtered = df_protocol.loc[ids]
             best_idx = df_filtered[criteria_param].idxmax() if better == "bigger" else \
                        df_filtered[criteria_param].idxmin()

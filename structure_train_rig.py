@@ -194,10 +194,11 @@ class EarlyStopper():
         detected_normalised = self.detected_normalised[idx_dataset]
         if len(detected_normalised) != self.consider:
             return stop
-        progress = list(self.progress[idx_dataset].values())[0]
         stop = self.__stop_detections(detected_normalised, idx_dataset)
-        if len(progress) == self.consider:
-            stop = stop or self.__stop_value_progress(progress, idx_dataset)
+        if len(list(self.progress[idx_dataset].values())[0]) != self.consider:
+            return stop
+        progress = list(self.progress[idx_dataset].values())[0]
+        stop = stop or self.__stop_value_progress(progress, idx_dataset)
         return stop
 
     def __update_best(self, idx_dataset: int, value: float, model, epoch: int):
@@ -332,7 +333,7 @@ class TrainRig(UtilityModel, PredictionEvaluator):
             n_dataset = helper.str_list2value(val_info, 0)
             better = "bigger" if early_stopper_criteria == "ap" else "smaller" # else means distance
             early_stopper = EarlyStopper(patience=0, consider=consider, better=better, n_dataset=n_dataset,
-                                         must_progress_by=0.05, validation_frequency=validation_frequency)
+                                         must_progress_by=0.03, validation_frequency=validation_frequency)
 
             file_additional_information = current_data_dir + "/imgsInformation.dat"
             df_additional_info = pd.read_csv(file_additional_information, index_col=None)
