@@ -34,9 +34,15 @@ class Visualise(PredictionEvaluator):
 
         self.dir_save = dir_test + "/predictions_visualised"
         helper.create_dir(self.dir_save, overwrite=True)
+        self.set_assignment(criteria=self.orders.get_value_for(dir_ids, "assignCriteria"),
+                            better=self.orders.get_value_for(dir_ids, "assignBetter"),
+                            threshold=self.orders.get_value_for(dir_ids, "assignTpThreshold"))
+        self.set_prediction_criteria(criteria=self.orders.get_value_for(dir_ids, "predictionCriteria"),
+                                     better=self.orders.get_value_for(dir_ids, "predictionBetter"),
+                                     threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
         self.set_predictions(prediction_file)
         self.set_truth(file_bbox)
-        predictions_labeled = self.get_labels()
+        predictions_labeled = self.get(["labels"])[0]["labels"]
         self.__visualise_predictions(current_data_dir, pd.read_csv(file_bbox, index_col=None), predictions_labeled,
                                      visualise_as)
 
