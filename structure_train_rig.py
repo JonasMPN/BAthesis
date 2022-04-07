@@ -20,10 +20,19 @@ helper = Helper()
 
 class CustomDataset(Dataset):
     def __init__(self, root, file_bbox, img_ids: tuple=None, transforms=None):
+        """
+        Images must be named 'number.png' in the directory and there must not be anything else in it.
+        :param root:
+        :param file_bbox:
+        :param img_ids:
+        :param transforms:
+        """
         self.root = root
         self.df_bbox = pd.read_csv(file_bbox, index_col=None)
         self.transforms = transforms
-        self.imgs = list(sorted(os.listdir(self.root)))
+        self.imgs = list()
+        for id in range(len(list(os.listdir(self.root)))):
+            self.imgs.append(f"{id}.png")
         self.iter_id = 0
         if img_ids is None:
             self.img_ids = (0, len(self.imgs))
@@ -63,7 +72,7 @@ class CustomDataset(Dataset):
         return self
 
     def __next__(self):
-        if self.iter_id == self.img_ids[1]-1:
+        if self.iter_id == self.img_ids[1]:
             raise StopIteration
         return self.__getitem__(self.iter_id)
 
@@ -95,47 +104,44 @@ class UtilityModel:
 
 class EarlyStopper():
     def __init__(self,
-                 patience: int=5,
-                 better: str="smaller",
-                 best_value_init: float=50,
-                 best_no_detection_init: int=50):
+                 patience: int,
+                 consider: int,
+                 better: str,
+                 n_dataset: int,
+                 must_progress_by: float,
+                 validation_frequency: int):
         """
-        :param patience:
+        :param patience: epoch at which to start saving progress
+        :param consider: how many epochs of each dataset to consider
         :param better: 'bigger' or 'smaller'
-        :param best_value_init: depending on better a value that is bigger or smaller than the worst expected
+        :param n_datasets: number of different datasets used for the validation. They need to be cycled continuously
+        :param must_progress_by: expected minimum percentage CHANGE per epoch
         validation result
         """
         self.patience = patience
-        self.progress = {best_no_detection_init: [best_value_init]}
+        self.consider = consider
+        self.n_dataset = n_dataset
+        self.validation_frequency = validation_frequency
         self.best_model = None
         self.best_epoch = None
-        self.no_detection = list()
-        self.best_validation = best_value_init
+        self.best_validation = {idx_dataset: float() for idx_dataset in range(self.n_dataset)}
+        self.best_margin = {idx_dataset: float() for idx_dataset in range(self.n_dataset)}
+        self.progress = {idx_dataset: dict() for idx_dataset in range(self.n_dataset)}
+        self.detected_normalised = {idx_dataset: list() for idx_dataset in range(self.n_dataset)}
+        self.value_init = {idx_dataset: None for idx_dataset in range(self.n_dataset)}
         self.better = max if better=="bigger" else min
         self.margin = 0.9 if better=="bigger" else 1.1
-        self.best_margin = self.best_validation * self.margin
+        epochs_between_datasets = self.validation_frequency*(self.n_dataset-1)
+        self.must_progress_by = abs(1-(self.better(1-must_progress_by, 1+must_progress_by))**(epochs_between_datasets))
         self.stopped_by = str()
 
-    def consider_stopping(self, model, epoch: int, value: float or np.ndarray, no_detection: int) -> bool:
-        stop = False
-        self.no_detection.append(no_detection)
-        if len(self.no_detection) == self.patience:
-            stop = stop or self.__stop_no_detections()
-            self.no_detection.pop(0)
-
-        if not stop:
-            best_no_detection = next(iter(self.progress))
-            if no_detection < best_no_detection:
-                self.progress = {no_detection: [value]}
-                self.__update_best(value, model, epoch)
-            elif no_detection == best_no_detection:
-                if self.better(value, self.best_validation) == value:
-                    self.__update_best(value, model, epoch)
-                self.progress[best_no_detection].append(value)
-                if len(self.progress[best_no_detection]) == self.patience:
-                    stop = stop or self.__stop_value_progress()
-                    self.progress[best_no_detection].pop(0)
-        return stop
+    def consider_stopping(self, model, epoch: int, value: float or np.ndarray, detected: int or float) -> bool:
+        idx_dataset = self.__get_idx_dataset(epoch)
+        self.__update_dataset_progress(idx_dataset, model, epoch, value, detected)
+        stop = []
+        for idx_dataset in range(self.n_dataset):
+            stop.append(self.__consider_dataset(idx_dataset))
+        return all(stop)
 
     def get_best_epoch(self) -> int:
         return self.best_epoch
@@ -146,67 +152,107 @@ class EarlyStopper():
     def get_stopped_by(self):
         return self.stopped_by
 
-    def __update_best(self, value, model, epoch):
-        self.best_validation = value
+    def __get_idx_dataset(self, epoch):
+        number_iteration_dataset = np.floor((epoch - self.patience) / (self.validation_frequency * self.n_dataset))
+        number_dataset_wrong_freq = epoch-(self.patience+number_iteration_dataset*self.n_dataset*self.validation_frequency)
+        number_dataset = number_dataset_wrong_freq/self.validation_frequency
+        return int(number_dataset)
+
+    def __update_dataset_progress(self, idx_dataset: int, model, epoch: int, value: float or np.ndarray,
+                                  detected: int or float):
+        dataset_detected = self.detected_normalised[idx_dataset]
+        dataset_progress = self.progress[idx_dataset]
+        best_validation = self.best_validation[idx_dataset]
+        if value is None:
+            if self.value_init[idx_dataset] is not None:
+                value = self.value_init[idx_dataset]
+        if epoch >= self.patience:
+            if len(dataset_detected) == self.consider:
+                dataset_detected.pop(0)
+            dataset_detected.append(detected)
+            if value is None:
+                return
+            if len(dataset_progress) == 0:
+                dataset_progress[detected] = [value]
+                self.value_init[idx_dataset] = value
+                return
+            best_detection = next(iter(dataset_progress))
+            if detected > best_detection:
+                dataset_progress[detected] = [value]
+                dataset_progress.pop(best_detection)
+                self.__update_best(idx_dataset ,value, model, epoch)
+            elif detected == best_detection:
+                if len(dataset_progress[detected]) == self.consider:
+                    dataset_progress[detected].pop(0)
+                dataset_progress[detected].append(value)
+                if self.better(value, best_validation) == value:
+                    self.__update_best(idx_dataset ,value, model, epoch)
+        return
+
+    def __consider_dataset(self, idx_dataset: int) -> bool:
+        stop = False
+        detected_normalised = self.detected_normalised[idx_dataset]
+        if len(detected_normalised) != self.consider:
+            return stop
+        progress = list(self.progress[idx_dataset].values())[0]
+        stop = self.__stop_detections(detected_normalised, idx_dataset)
+        if len(progress) == self.consider:
+            stop = stop or self.__stop_value_progress(progress, idx_dataset)
+        return stop
+
+    def __update_best(self, idx_dataset: int, value: float, model, epoch: int):
+        self.best_validation[idx_dataset] = value
         self.best_epoch = epoch
         self.best_model = model
-        self.best_margin = self.best_validation * self.margin
+        self.best_margin[idx_dataset] = self.best_validation[idx_dataset] * self.margin
 
-    def __stop_no_detections(self) -> bool:
-        consider_last = 4
-        margin = 0
-        margined_best_value = next(iter(self.progress))*(1+margin)
-        return self.__inconsistent_progress(self.no_detection, margined_best_value, consider_last, min,
-                                            "global_inconsistency")
+    def __stop_detections(self, detected_normalised: list, idx_dataset: int) -> bool:
+        margined_best_value = next(iter(self.progress[idx_dataset]))*0.9
+        return self.__inconsistent_progress(detected_normalised, margined_best_value, max, "global_inconsistency")
 
-    def __stop_value_progress(self) -> bool:
-        must_progress_by = 0.03
-        consider_last = 4
-        values = list(self.progress.values())[0]
-        slow_local_progress = self.__progress_too_slow(values,
-                                                       must_progress_by,
+    def __stop_value_progress(self, progress: list, idx_dataset: int) -> bool:
+        slow_local_progress = self.__progress_too_slow(progress,
+                                                       self.must_progress_by,
                                                        self.better,
                                                        "local_slow_progress")
-        local_inconsistent = self.__inconsistent_progress(values,
-                                                          next(iter(self.progress))*self.margin,
-                                                          consider_last,
+        dataset_best = self.best_margin[idx_dataset]
+        local_inconsistent = self.__inconsistent_progress(progress,
+                                                          dataset_best,
                                                           self.better,
                                                           "local_inconsistency")
-
         return any([slow_local_progress, local_inconsistent])
 
     def __inconsistent_progress(self,
-                                values: list,
+                                progress: list,
                                 margined_best_value: float,
-                                include_last: int,
                                 better,
                                 criteria: str):
-        """Stops if each of the last 'include_last' progress values was worse than the best validation value + a margin
-        that occurred so far IF that best_value is not in the last 'include_last' progress values."""
+        """Stops if each of the last 'consider' progress values was worse than the best validation value + a margin
+        that occurred so far."""
         stop = list()
-        progress_to_use = values[self.patience-include_last:]
-        for value in progress_to_use:
-            if better(value, margined_best_value) != value:
+        for value in progress:
+            if better(value, margined_best_value) == margined_best_value:
                 stop.append(True)
                 self.stopped_by = criteria
             else:
                 stop.append(False)
-        return all(i for i in stop)
+        return all(stop)
 
     def __progress_too_slow(self,
-                            values: list,
+                            progress: list,
                             must_progress_by: float,
                             better,
                             criteria: str):
-        """Stops the training if EACH (determined by 'patience') progress is smaller than must_progress_by."""
+        """Stops the training if EACH (determined by 'consider') progress is smaller than must_progress_by."""
         stop = list()
-        for i, value in enumerate(values[:-1]):
-            if abs(1-better(values[i+1]/value, 1)) < must_progress_by:
+        for i, value in enumerate(progress[:-1]):
+            next_value = progress[i+1]
+            if abs(1-better(next_value/value, 1)) < must_progress_by:
                 stop.append(True)
                 self.stopped_by = criteria
             else:
                 stop.append(False)
-        return all(i for i in stop)
+        return all(stop)
 
 
 class TrainRig(UtilityModel, PredictionEvaluator):
@@ -220,19 +266,18 @@ class TrainRig(UtilityModel, PredictionEvaluator):
         self.dir_root = root_dir
         self.test_rig = test.TestRig(self.orders, self.dir_root)
 
-    def train_all(self,
-                  num_classes: int=2,
-                  batch_size: int=8,
-                  print_progress: bool=False,
-                  test_after_train: bool=False,
-                  early_stopper_criteria: str=""):
+    def all(self,
+            num_classes: int=2,
+            batch_size: int=8,
+            print_progress: bool=False,
+            test_after_train: bool=False):
         n_train_orders = self.orders.get_number_of_orders("train")
         for idx_train, dir_ids in enumerate(self.orders.get_all_parents_dir_idx("train")):
             if not test_after_train:
                 helper.print_progress(idx_train, n_train_orders, "Training")
             else:
                 helper.print_progress(idx_train, n_train_orders, "Training and testing")
-            self.__train_dir_ids(dir_ids, num_classes, batch_size, print_progress, early_stopper_criteria)
+            self.__train_dir_ids(dir_ids, num_classes, batch_size, print_progress)
             if test_after_train:
                 test_dir_ids = self.orders.get_child_data_dirs({"test": dir_ids["train"]})
                 self.test_rig.test_after_train(test_dir_ids, self.get_transform(False), num_classes)
@@ -242,7 +287,6 @@ class TrainRig(UtilityModel, PredictionEvaluator):
                         num_classes: int,
                         batch_size: int,
                         print_progress: bool,
-                        early_stopper_criteria: str,
                         validation_frequency: int=2):
         current_data_dir = self.dir_root + f"/data/{int(dir_ids['data'])}"
         dir_data_set = current_data_dir + "/imgs"
@@ -258,20 +302,42 @@ class TrainRig(UtilityModel, PredictionEvaluator):
         else:
             helper.create_dir(dir_train)
 
-        n_train = self.orders.get_value_for(dir_ids, "nTrainImgs")
-        use_early_stopper = False
-        if len(early_stopper_criteria) != 0:
-            use_early_stopper = True
-            early_stopper = EarlyStopper()
-            validation_img_info = ast.literal_eval(self.orders.get_value_for(dir_ids, "valInfo"))
+        n_train = self.orders.get_value_for(dir_ids, "nImgTrain")
+        early_stopper_criteria = self.orders.get_value_for(dir_ids, "earlyStopperCriteria")
+        if early_stopper_criteria is not None:
+            validation_info = ast.literal_eval(self.orders.get_value_for(dir_ids, "validationInfo"))
             val_data_sets = list()
-            imgs_per_validation = validation_img_info[1]
-            for data_set_idx in range(validation_img_info[0]):
+            imgs_per_validation = validation_info[1]
+            for data_set_idx in range(validation_info[0]):
                 min_img_idx = n_train+data_set_idx*imgs_per_validation
                 max_img_idx = n_train+(data_set_idx+1)*imgs_per_validation
                 val_data_sets.append(CustomDataset(dir_data_set, file_bbox, (min_img_idx, max_img_idx),
                                                    self.get_transform(False)))
             data_set_val = itertools.cycle(val_data_sets)
+
+            assign_criteria = self.orders.get_value_for(dir_ids, "assignCriteria")
+            assign_threshold = self.orders.get_value_for(dir_ids, "assignTpThreshold")
+            need_size = True if assign_criteria == "distance" else False
+            if need_size:
+                assign_threshold *= self.__get_img_size(dir_ids)[0] # distance is not absolut and not normalised
+            self.set_assignment(criteria=assign_criteria,
+                                better=self.orders.get_value_for(dir_ids, "assignBetter"),
+                                threshold=assign_threshold)
+
+            self.set_prediction_criteria(criteria=self.orders.get_value_for(dir_ids, "predictionCriteria"),
+                                         better=self.orders.get_value_for(dir_ids, "predictionBetter"),
+                                         threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
+            consider = 2
+            val_info = self.orders.get_value_for(dir_ids, "validationInfo")
+            n_dataset = helper.str_list2value(val_info, 0)
+            better = "bigger" if early_stopper_criteria == "ap" else "smaller" # else means distance
+            early_stopper = EarlyStopper(patience=0, consider=consider, better=better, n_dataset=n_dataset,
+                                         must_progress_by=0.05, validation_frequency=validation_frequency)
+
+            file_additional_information = current_data_dir + "/imgsInformation.dat"
+            df_additional_info = pd.read_csv(file_additional_information, index_col=None)
+            df_n_vortices = df_additional_info["n_vortices"]
+
 
         data_set = CustomDataset(dir_data_set, file_bbox, (0, n_train), self.get_transform(True))
         data_loader = DataLoader(data_set, batch_size=batch_size, collate_fn=collate_fn)
@@ -281,30 +347,46 @@ class TrainRig(UtilityModel, PredictionEvaluator):
         optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
         stopped_by = "max_epochs"
+
         for epoch in range(int(self.orders.get_value_for(dir_ids, "maxEpochs"))+1):
             train_one_epoch(model, optimizer, data_loader, self.device, epoch, print_freq=1,
                             print_progress=print_progress)
             lr_scheduler.step()
 
-            if use_early_stopper and not epoch % validation_frequency:
-                validation_value, no_detection = self.__validation(model, next(data_set_val), dir_ids,
-                                                                   early_stopper_criteria)
-                if validation_value is not None:
-                    if early_stopper.consider_stopping(model, epoch, validation_value, no_detection):
-                        model, epoch, stopped_by = early_stopper.get_best_model(), early_stopper.get_best_epoch(), \
-                                                   early_stopper.get_stopped_by()
-                        break
+            if early_stopper_criteria is not None and not epoch % validation_frequency:
+                next_data_set = next(data_set_val)
+                validation_value, n_detected_vortices = self.__validation(model, next_data_set, dir_ids,
+                                                                          early_stopper_criteria)
+                current_img_ids = next_data_set.img_ids
+                n_actual_vortices = df_n_vortices[current_img_ids[0]:current_img_ids[1]].sum()
+                detected_normalised = n_detected_vortices/n_actual_vortices
+                if early_stopper.consider_stopping(model, epoch, validation_value, detected_normalised):
+                    model, epoch, stopped_by = early_stopper.get_best_model(), early_stopper.get_best_epoch(), \
+                                               early_stopper.get_stopped_by()
+                    break
                 else:
                     pass
-
         self.orders.set_secondary_parameter_values(self.orders.get_row_from_dir_ids(dir_ids, "train"),
                                                    epochs=epoch, stoppedBy=stopped_by)
         torch.save(model.state_dict(), dir_train + f"/model.pt")
 
-    def __validation(self, model, data_set_val: CustomDataset, dir_ids: dict, early_stopper_criteria: str)->np.ndarray:
+    def __validation(self, model, data_set_val: CustomDataset, dir_ids: dict, early_stopper_criteria: str)\
+            -> tuple[np.ndarray, int]:
         df_predictions = self.test_rig.test_validation(model, data_set_val)
         file_bbox = self.dir_root + f"/data/{dir_ids['data']}/bbox.dat"
         self.set_predictions(df_predictions)
         self.set_truth(file_bbox)
-        return self.get_criteria_mean(early_stopper_criteria)
+        criteria_mean, n_detected_vortices = self.get([early_stopper_criteria])
+        return criteria_mean[early_stopper_criteria], n_detected_vortices
 
+    def __get_img_size(self, dir_ids: dict) -> tuple[int, int] or None:
+        plotType = self.orders.get_value_for(dir_ids, "plotType")
+        if plotType == "vec":
+            size = ast.literal_eval(self.orders.get_value_for(dir_ids, "imgSize"))
+            width, height = size[0], size[1]
+        elif plotType == "col":
+            size = ast.literal_eval(self.orders.get_value_for(dir_ids, "nInfoPerAxis"))
+            width, height = size[0], size[1]
+        else:
+            return None
+        return width, height
