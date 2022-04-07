@@ -18,7 +18,7 @@ workload = {
     "turn_off_when_done": False
 }
 
-root = "D:/Jonas/Studium/TU/Semester/Bachelor/pythonProject/vortex_detection"
+root = ""
 data_dir = "pre_large/vec_info_diff"
 file_ending_additional_info = "imgsInformation.dat"
 
@@ -55,16 +55,15 @@ parameters = {
         "imgSize": [[600,600]],  # (width, height)
         "nImg": [261],
         "bboxSizeFac": [0.2],
-        # "nInfoPerAxis": [[20, 20], [30, 30], [40, 40], [50, 50], [60, 60], [70,70], [80,80], [90,90], [100, 100]],
-        "nInfoPerAxis": [[40, 40]],
+        "nInfoPerAxis": [[20, 20], [30, 30], [40, 40], [50, 50], [60, 60], [70,70], [80,80], [90,90], [100, 100]],
         "nVortices": [[1,2]],
-        "noiseFac": [0],
-        "localNoiseFac": [0],
+        "noiseFac": [0, 2],
+        "localNoiseFac": [0, 2],
         "nLocalNoiseAreas": [[10]],  # do not set this to 0. If no local noise is desired, set noise_fac to 0
-        "presetDistance": [1], # either a float or None
+        "presetDistance": [0.5, 1.5], # either a float or None
         "randRotDir": "no", # if 'no': rotation direction alternates everytime a vortex is created
         "seed": [42],
-        "gamma": [[3,3]],
+        "gamma": [[3,3], [2,4]],
         "time": [[80,90]],
         "ignore": [["plotType", ["col", "arrowheadWanted", "size"]]]
     },
@@ -76,7 +75,7 @@ parameters = {
         "predictionCriteria": ["score"],
         "predictionThreshold": [0.75], # which predictions to use for the calculation of the distances and labels,
         "predictionBetter": ["above"],
-        "assignCriteria": ["distance"],
+        "assignCriteria": ["distance"],  # distance is normalised on the image's width
         "assignTpThreshold": [0.02],  # which predictions are regarded true positives (using assignCriteria)
         "assignBetter": ["below"],
         "secondaryParameters": ["epochs", "stoppedBy"]
@@ -120,7 +119,7 @@ if workload["creation"]:
 
 
 if prep_experimental_data:
-    dir_experimental_data = "D:/Jonas/Studium/TU/Semester/Bachelor/pythonProject/exercise_object_detection/data_experimental"
+    dir_experimental_data = ""
     real_life_data = prep.NonAnalyticalData()
     for file in exp_data_files:
         print(f"Preparing {file}.")
