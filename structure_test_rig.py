@@ -48,12 +48,16 @@ class TestRig(util_model):
         dir_train = current_data_dir + f"/{dir_ids['train']}"
         dir_test = dir_train + f"/{dir_ids['test']}"
 
+        if self.orders.get_value_for(dir_ids, "epochs") == None:
+            print(f"Test directory {dir_ids['test']} does not have a trained model.")
+            return
+
         if os.path.isdir(dir_test):
             if os.path.isdir(dir_test):
-                print(f"Already tested these parameters (train_dir_idx: {dir_ids['test']})")
+                print(f"Already tested {dir_ids['test']}")
                 return
             else:
-                print(f"Unfinished training in (train_dir_idx: {dir_ids['test']}). Repeating that order.")
+                print(f"Unfinished training in train_dir_idx: {dir_ids['test']}. Repeating that order.")
         else:
             helper.create_dir(dir_test)
 
