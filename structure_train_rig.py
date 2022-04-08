@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from utils import collate_fn
 from engine import train_one_epoch
 import itertools
+from copy import deepcopy
 
 helper = Helper()
 
@@ -111,32 +112,37 @@ class EarlyStopper():
                  must_progress_by: float,
                  validation_frequency: int):
         """
+        gi: global inconsistency, lsp: local slow progress, li: local inconsistency, nd: no detections
         :param patience: epoch at which to start saving progress
         :param consider: how many epochs of each dataset to consider
         :param better: 'bigger' or 'smaller'
         :param n_datasets: number of different datasets used for the validation. They need to be cycled continuously
-        :param must_progress_by: expected minimum percentage CHANGE per epoch
+        :param must_progress_by: expected minimum percentage CHANGE PER EPOCH
         validation result
         """
+        # todo changed here
         self.patience = patience
         self.consider = consider
         self.n_dataset = n_dataset
         self.validation_frequency = validation_frequency
         self.best_model = None
         self.best_epoch = None
-        self.best_validation = {idx_dataset: float() for idx_dataset in range(self.n_dataset)}
-        self.best_margin = {idx_dataset: float() for idx_dataset in range(self.n_dataset)}
-        self.progress = {idx_dataset: dict() for idx_dataset in range(self.n_dataset)}
+        self.no_detection = 0  # which detection value means that there the model did not make any detections
+
         self.detected_normalised = {idx_dataset: list() for idx_dataset in range(self.n_dataset)}
+        self.progress = {idx_dataset: list() for idx_dataset in range(self.n_dataset)}
+        self.best_detected = {idx_dataset: 0 for idx_dataset in range(self.n_dataset)}
+        self.best_validation = {idx_dataset: float() for idx_dataset in range(self.n_dataset)}
         self.value_init = {idx_dataset: None for idx_dataset in range(self.n_dataset)}
+        self.stopped_by = {idx_dataset: list() for idx_dataset in range(self.n_dataset)}
         self.better = max if better=="bigger" else min
         self.margin = 0.9 if better=="bigger" else 1.1
         epochs_between_datasets = self.validation_frequency*(self.n_dataset-1)
         self.must_progress_by = abs(1-(self.better(1-must_progress_by, 1+must_progress_by))**(epochs_between_datasets))
-        self.stopped_by = str()
 
     def consider_stopping(self, model, epoch: int, value: float or np.ndarray, detected: int or float) -> bool:
         idx_dataset = self.__get_idx_dataset(epoch)
+        self.stopped_by = {idx_dataset: list() for idx_dataset in range(self.n_dataset)}
         self.__update_dataset_progress(idx_dataset, model, epoch, value, detected)
         stop = []
         for idx_dataset in range(self.n_dataset):
@@ -150,7 +156,10 @@ class EarlyStopper():
         return self.best_model
 
     def get_stopped_by(self):
-        return self.stopped_by
+        dataframe_friendly = list()
+        for idx_dataset, stopped_by in self.stopped_by.items():
+            dataframe_friendly.append([idx_dataset, stopped_by])
+        return dataframe_friendly
 
     def __get_idx_dataset(self, epoch):
         number_iteration_dataset = np.floor((epoch - self.patience) / (self.validation_frequency * self.n_dataset))
@@ -163,6 +172,7 @@ class EarlyStopper():
         dataset_detected = self.detected_normalised[idx_dataset]
         dataset_progress = self.progress[idx_dataset]
         best_validation = self.best_validation[idx_dataset]
+        best_detection = self.best_detected[idx_dataset]
         if value is None:
             if self.value_init[idx_dataset] is not None:
                 value = self.value_init[idx_dataset]
@@ -173,20 +183,20 @@ class EarlyStopper():
             if value is None:
                 return
             if len(dataset_progress) == 0:
-                dataset_progress[detected] = [value]
+                dataset_progress.append(value)
                 self.value_init[idx_dataset] = value
+                self.__update_best(idx_dataset, value, detected, model, epoch)
                 return
-            best_detection = next(iter(dataset_progress))
             if detected > best_detection:
-                dataset_progress[detected] = [value]
-                dataset_progress.pop(best_detection)
-                self.__update_best(idx_dataset ,value, model, epoch)
+                dataset_progress.clear()
+                dataset_progress.append(value)
+                self.__update_best(idx_dataset ,value, detected, model, epoch)
             elif detected == best_detection:
-                if len(dataset_progress[detected]) == self.consider:
-                    dataset_progress[detected].pop(0)
-                dataset_progress[detected].append(value)
+                if len(dataset_progress) == self.consider:
+                    dataset_progress.pop(0)
+                dataset_progress.append(value)
                 if self.better(value, best_validation) == value:
-                    self.__update_best(idx_dataset ,value, model, epoch)
+                    self.__update_best(idx_dataset ,value, detected, model, epoch)
         return
 
     def __consider_dataset(self, idx_dataset: int) -> bool:
@@ -195,46 +205,51 @@ class EarlyStopper():
         if len(detected_normalised) != self.consider:
             return stop
         stop = self.__stop_detections(detected_normalised, idx_dataset)
-        if len(list(self.progress[idx_dataset].values())[0]) != self.consider:
+        stop = stop or self.__stop_no_detections(detected_normalised, idx_dataset)
+        if len(self.progress[idx_dataset]) != self.consider:
             return stop
-        progress = list(self.progress[idx_dataset].values())[0]
-        stop = stop or self.__stop_value_progress(progress, idx_dataset)
-        return stop
+        return stop or self.__stop_value_progress(self.progress[idx_dataset], idx_dataset)
 
-    def __update_best(self, idx_dataset: int, value: float, model, epoch: int):
-        self.best_validation[idx_dataset] = value
-        self.best_epoch = epoch
-        self.best_model = model
-        self.best_margin[idx_dataset] = self.best_validation[idx_dataset] * self.margin
+    def __update_best(self, idx_dataset: int, value: float, detected:float, model, epoch: int):
+        self.best_validation[idx_dataset] = deepcopy(value)
+        self.best_detected[idx_dataset] = deepcopy(detected)
+        self.best_epoch = deepcopy(epoch)
+        self.best_model = deepcopy(model)
+
+    def __stop_no_detections(self, detected_normalised: list, idx_dataset: int) -> bool:
+        if all([detection == self.no_detection for detection in detected_normalised]):
+            self.stopped_by[idx_dataset].append("nd")
+            return True
+        return False
 
     def __stop_detections(self, detected_normalised: list, idx_dataset: int) -> bool:
-        margined_best_value = next(iter(self.progress[idx_dataset]))*0.9
-        return self.__inconsistent_progress(detected_normalised, margined_best_value, max, "global_inconsistency")
+        global_inconsistent = self.__inconsistent_progress(detected_normalised, self.best_detected[idx_dataset], max)
+        if global_inconsistent:
+            self.stopped_by[idx_dataset].append("gi")
+        return global_inconsistent
 
     def __stop_value_progress(self, progress: list, idx_dataset: int) -> bool:
         slow_local_progress = self.__progress_too_slow(progress,
                                                        self.must_progress_by,
-                                                       self.better,
-                                                       "local_slow_progress")
-        dataset_best = self.best_margin[idx_dataset]
+                                                       self.better)
+        if slow_local_progress:
+            self.stopped_by[idx_dataset].append("slp")
         local_inconsistent = self.__inconsistent_progress(progress,
-                                                          dataset_best,
-                                                          self.better,
-                                                          "local_inconsistency")
+                                                          self.best_validation[idx_dataset],
+                                                          self.better)
+        if local_inconsistent:
+            self.stopped_by[idx_dataset].append("li")
         return any([slow_local_progress, local_inconsistent])
 
     def __inconsistent_progress(self,
                                 progress: list,
-                                margined_best_value: float,
-                                better,
-                                criteria: str):
-        """Stops if each of the last 'consider' progress values was worse than the best validation value + a margin
-        that occurred so far."""
+                                best_value: float,
+                                better):
+        """Stops if each of the last 'consider' progress values was worse than the best value ."""
         stop = list()
         for value in progress:
-            if better(value, margined_best_value) == margined_best_value:
+            if better(value, best_value) != value:
                 stop.append(True)
-                self.stopped_by = criteria
             else:
                 stop.append(False)
         return all(stop)
@@ -242,15 +257,13 @@ class EarlyStopper():
     def __progress_too_slow(self,
                             progress: list,
                             must_progress_by: float,
-                            better,
-                            criteria: str):
+                            better,):
         """Stops the training if EACH (determined by 'consider') progress is smaller than must_progress_by."""
         stop = list()
         for i, value in enumerate(progress[:-1]):
             next_value = progress[i+1]
             if abs(1-better(next_value/value, 1)) < must_progress_by:
                 stop.append(True)
-                self.stopped_by = criteria
             else:
                 stop.append(False)
         return all(stop)
@@ -295,11 +308,11 @@ class TrainRig(UtilityModel, PredictionEvaluator):
         dir_train = current_data_dir + f"/{dir_ids['train']}"
 
         if os.path.isdir(dir_train):
-            if os.path.isfile(dir_train + f"/model.pt"):
-                print(f"Already trained for these parameters (train_dir_idx: {dir_ids['train']})")
+            if self.orders.get_value_for(dir_ids, "epochs") != "None":
+                print(f"Already trained for the parameters of train_dir_idx: {dir_ids['train']}")
                 return
             else:
-                print(f"Unfinished training in (train_dir_idx: {dir_ids['train']}). Repeating that order.")
+                print(f"Unfinished training in train_dir_idx: {dir_ids['train']}. Repeating that order.")
         else:
             helper.create_dir(dir_train)
 
@@ -353,7 +366,6 @@ class TrainRig(UtilityModel, PredictionEvaluator):
             train_one_epoch(model, optimizer, data_loader, self.device, epoch, print_freq=1,
                             print_progress=print_progress)
             lr_scheduler.step()
-
             if early_stopper_criteria is not None and not epoch % validation_frequency:
                 next_data_set = next(data_set_val)
                 validation_value, n_detected_vortices = self.__validation(model, next_data_set, dir_ids,
@@ -369,7 +381,8 @@ class TrainRig(UtilityModel, PredictionEvaluator):
                     pass
         self.orders.set_secondary_parameter_values(self.orders.get_row_from_dir_ids(dir_ids, "train"),
                                                    epochs=epoch, stoppedBy=stopped_by)
-        torch.save(model.state_dict(), dir_train + f"/model.pt")
+        if model is not None:
+            torch.save(model.state_dict(), dir_train + f"/model.pt")
 
     def __validation(self, model, data_set_val: CustomDataset, dir_ids: dict, early_stopper_criteria: str)\
             -> tuple[np.ndarray, int]:
