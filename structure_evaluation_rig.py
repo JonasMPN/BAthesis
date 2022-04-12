@@ -1,3 +1,5 @@
+import ast, os
+
 from vortex_detection import data_prep as prep
 from helper_functions import Helper
 from numpy import round
@@ -20,12 +22,13 @@ class EvaluationRig(PredictionEvaluator):
         self.file_protocol = protocol_file
         try:
             self.df_protocol = pd.read_csv(self.file_protocol, index_col=None)
-            self.already_evaluated = self.df_protocol["dir_test"].max()
+            self.already_evaluated = int(self.df_protocol["dir_test"].max())
         except FileNotFoundError:
             self.df_protocol = pd.DataFrame()
             self.already_evaluated = -1
 
-    def predictions(self, handle_additional_information: dict, ignore_params: list[str], all: bool=True):
+    def predictions(self, handle_additional_information: dict, ignore_params: list[str],
+                    validation_cols: list[str]=None, all: bool=True):
         """
 
         :param ignore_params:
@@ -37,7 +40,7 @@ class EvaluationRig(PredictionEvaluator):
         :return:
         """
         evaluation = {"dir_test": list(), "mean_ap": list(), "mean_distance_normalised": list(),
-                      "not_detected_normalised":list()}
+                      "detected_normalised":list()}
         tmp_ids = self.orders.get_all_parents_dir_idx("test")[0]
         file_additional_info = self.dir_root + f"/data/{tmp_ids['data']}/imgsInformation.dat"
         additional_params = pd.read_csv(file_additional_info).columns.tolist()
@@ -59,7 +62,7 @@ class EvaluationRig(PredictionEvaluator):
             df_test = pd.read_csv(self.dir_root+f"/database_test.dat", index_col=None)
             dir_indices = list()
             start_id = self.already_evaluated if self.already_evaluated != -1 else 0
-            for dir_test_id in range(start_id, df_test.shape[0]):
+            for dir_test_id in range(start_id, int(df_test.shape[0])):
                 dir_indices.append(self.orders.get_parent_dir_idx({"test": dir_test_id}))
             n_evaluation_orders = len(dir_indices)
         else:
@@ -88,6 +91,8 @@ class EvaluationRig(PredictionEvaluator):
                 evaluation[param].append(value)
 
         df_new_eval = pd.DataFrame(evaluation)
+        if validation_cols is not None:
+            df_new_eval, _ = self.__parse_validation_columns(dataframe=df_new_eval, columns=validation_cols)
         self.df_protocol = pd.concat([self.df_protocol, df_new_eval], ignore_index=True)
         self.df_protocol["dir_test"].astype("int")
         self.df_protocol.to_csv(self.file_protocol, index=False)
@@ -105,14 +110,17 @@ class EvaluationRig(PredictionEvaluator):
         :param param:
         :param result_cols: columns that represent parameters that have not been set, but are results of an experiment
         :param criteria: {"param": "bigger" or "smaller"}
-        :param ignore_cols:
-        :param mean_cols:
+        :param ignore_cols: columns that will be ignored
+        :param mean_cols: columns
         :return:
         """
+        if not os.path.isdir(save_directory):
+            helper.create_dir(save_directory)
+
         criteria_param = next(iter(criteria))
         better = criteria[criteria_param]
         if better not in ["bigger", "smaller"]:
-            raise ValueError(f"Parameter 'criteria' must be a dict with")
+            raise ValueError(f"Parameter 'criteria' must be a dict with a value of either 'bigger' or 'smaller'.")
         for ignore in ignore_cols:
             if ignore in result_cols+mean_cols:
                 raise ValueError(f"Ignored column {ignore} must not be existing in result_cols or mean_cols.")
@@ -170,18 +178,26 @@ class EvaluationRig(PredictionEvaluator):
         dir_train = current_data_dir + f"/{dir_ids['train']}"
         dir_test = dir_train + f"/{dir_ids['test']}"
         prediction_file = dir_test + "/predictions.dat"
+        if not os.path.isfile(prediction_file):
+            return {"mean_ap": None, "mean_distance_normalised": None, "detected_normalised": None}
 
         self.set_truth(file_bbox)
         self.set_predictions(prediction_file)
-        self.set_assignment(criteria=self.orders.get_value_for(dir_ids, "assignCriteria"),
+        assign_criteria = self.orders.get_value_for(dir_ids, "assignCriteria")
+        assign_threshold = self.orders.get_value_for(dir_ids, "assignTpThreshold")
+        need_size = True if assign_criteria == "distance" else False
+        if need_size:
+            assign_threshold *= self.__get_img_size(dir_ids)[0]  # distance is now absolut and not normalised
+
+        self.set_assignment(criteria=assign_criteria,
                             better=self.orders.get_value_for(dir_ids, "assignBetter"),
-                            threshold=self.orders.get_value_for(dir_ids, "assignTpThreshold"))
+                            threshold=assign_threshold)
         self.set_prediction_criteria(criteria=self.orders.get_value_for(dir_ids, "predictionCriteria"),
                                      better=self.orders.get_value_for(dir_ids, "predictionBetter"),
                                      threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
         results, n_detected = self.get_all_criteria()
         if self.orders.get_value_for(dir_ids, "plotType") == "vec":
-            width = helper.str_list2value(self.orders.get_value_for(dir_ids, "size"),0)
+            width = helper.str_list2value(self.orders.get_value_for(dir_ids, "imgSize"),0)
         elif self.orders.get_value_for(dir_ids, "plotType") == "col":
             width = helper.str_list2value(self.orders.get_value_for(dir_ids, "nInfoPerAxis"), 0)
         else:
@@ -201,12 +217,61 @@ class EvaluationRig(PredictionEvaluator):
         return handled
 
     def __get_test_img_interval(self, dir_ids):
-        n_train_imgs = self.orders.get_value_for(dir_ids, "nTrainImgs")
-        validation = self.orders.get_value_for(dir_ids, "valInfo")
+        n_train_imgs = self.orders.get_value_for(dir_ids, "nImgTrain")
+        validation = self.orders.get_value_for(dir_ids, "validationInfo")
         n_validation_imgs = helper.str_list2value(validation, 0) * helper.str_list2value(validation, 1)
         test_min = n_train_imgs + n_validation_imgs
-        test_max = test_min + self.orders.get_value_for(dir_ids, "nTestImgs")
+        test_max = test_min + self.orders.get_value_for(dir_ids, "nImgTest")
         return [test_min, test_max]
+
+    def __get_img_size(self, dir_ids: dict) -> tuple[int, int] or None:
+        plotType = self.orders.get_value_for(dir_ids, "plotType")
+        if plotType == "vec":
+            size = ast.literal_eval(self.orders.get_value_for(dir_ids, "imgSize"))
+            width, height = size[0], size[1]
+        elif plotType == "col":
+            size = ast.literal_eval(self.orders.get_value_for(dir_ids, "nInfoPerAxis"))
+            width, height = size[0], size[1]
+        else:
+            return None
+        return width, height
+
+    @staticmethod
+    def __parse_validation_columns(dataframe: pd.DataFrame, columns: list[str]):
+        """
+        Columns have to be of shape [[idx_dataset_0, [parameter]], [idx_dataset_1, [parameter]], ...]. This function
+        counts the occurrences of each parameter for every row.
+        :param columns:
+        :return:
+        """
+        new_columns = {col: dict() for col in columns}
+        column_lengths = dataframe.shape[0]
+        for column in columns:
+            row = dataframe[column]
+            for row_id, expression in enumerate(row):
+                expression = ast.literal_eval(expression)
+                new_row_entries = list()
+                for entry in expression:
+                    for value in entry[1]:
+                        new_row_entries.append(value)
+                unique_values = set(new_row_entries)
+                for unique in unique_values:
+                    if unique not in new_columns[column].keys():
+                        new_columns[column][unique] = [0 for _ in range(row_id)]
+                    new_columns[column][unique].append(new_row_entries.count(unique))
+                for missing in [param for param in new_columns[column].keys() if param not in unique_values]:
+                    new_columns[column][missing].append(0)
+            for param, values in new_columns[column].items():
+                if len(values) != column_lengths:
+                    new_columns[column][param] += [0 for _ in range(column_lengths - len(values))]
+        new_df_protocol = dataframe.drop(columns, axis=1)
+        added_columns = list()
+        for column in columns:
+            add_columns = new_columns[column]
+            added_columns += list(add_columns.keys())
+            for column_name, values in add_columns.items():
+                new_df_protocol[column_name] = values
+        return new_df_protocol, added_columns
 
     @staticmethod
     def __bar_plots(save_directory: str,
