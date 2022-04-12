@@ -9,12 +9,12 @@ from sklearn.preprocessing import MinMaxScaler, normalize
 from sklearn.metrics import mean_squared_error as rms
 import scipy.io as io
 
-import helper_functions as hf
+from helper_functions import Helper
 from PIL import Image, ImageDraw
 import os, ast
 from copy import copy
 
-helper = hf.Helper()
+helper = Helper()
 
 
 class Orders:
@@ -185,7 +185,8 @@ class Orders:
     def get_parent_dir_idx(self, child_id: dict) -> dict:
         """
         Solves the task: 5 order_types, in the data_base for the 4th there is a row with dir_{3rd order_type}=x. Now
-        you want to know which dir_ids (from the 1st and 2nd order_type) belong to that row.
+        you want to know which dir_ids (from the 1st and 2nd order_type) belong to that row. This function is
+        independent from the current set of parameters.
         :param child_id: {{first_parent_order_type}: {dir_id}
         :return: dir_order_types as keys and their indices as values
         """
@@ -400,24 +401,25 @@ class Orders:
         ignore_some = False if self.__ignore_param_for_order[order_type] is None else True
         if not ignore_some:
             return
-        for trigger_param, info_list in self.__ignore_param_for_order[order_type].items():
-            trigger_value = info_list[0]
-            ignore_parameters = info_list[1:]
-            dict_for_df = helper.merge_list_of_dicts(self.orders[order_type])
-            df_all_orders = pd.DataFrame(dict_for_df)
-            df_only_trigger = df_all_orders.loc[df_all_orders[trigger_param] == trigger_value]
-            if df_only_trigger.empty:
-                helper.warning(f"{trigger_param}={trigger_value} does not exist for this set of parameters. Ignoring "
-                               f"{[trigger_param, [trigger_value]+ignore_parameters]} and continuing.")
-                continue
-            df_with_duplicates = df_only_trigger.drop(ignore_parameters, axis=1)
-            df_duplicates_cleaned = df_with_duplicates.drop_duplicates()
-            df_duplicates_cleaned =  df_duplicates_cleaned.fillna("None")
-            df_without_trigger = df_all_orders.loc[df_all_orders[trigger_param] != trigger_value]
+        for trigger_param, info_lists in self.__ignore_param_for_order[order_type].items():
+            for info_list in info_lists:
+                trigger_value = info_list[0]
+                ignore_parameters = info_list[1:]
+                dict_for_df = helper.merge_list_of_dicts(self.orders[order_type])
+                df_all_orders = pd.DataFrame(dict_for_df)
+                df_only_trigger = df_all_orders.loc[df_all_orders[trigger_param] == trigger_value]
+                if df_only_trigger.empty:
+                    helper.warning(f"{trigger_param}={trigger_value} does not exist for this set of parameters. Ignoring "
+                                   f"{[trigger_param, [trigger_value]+ignore_parameters]} and continuing.")
+                    continue
+                df_with_duplicates = df_only_trigger.drop(ignore_parameters, axis=1)
+                df_duplicates_cleaned = df_with_duplicates.drop_duplicates()
+                df_duplicates_cleaned =  df_duplicates_cleaned.fillna("None")
+                df_without_trigger = df_all_orders.loc[df_all_orders[trigger_param] != trigger_value]
 
-            df_all_orders = pd.concat([df_without_trigger, df_duplicates_cleaned], ignore_index=True).fillna("None")
-            cleaned_orders = helper.df_to_orders(df_all_orders)
-            self.orders[order_type] = cleaned_orders
+                df_all_orders = pd.concat([df_without_trigger, df_duplicates_cleaned], ignore_index=True).fillna("None")
+                cleaned_orders = helper.df_to_orders(df_all_orders)
+                self.orders[order_type] = cleaned_orders
 
     def __match_param_order_type(self, param: str) -> str:
         for order_type in self.order_type_succession:
@@ -557,7 +559,6 @@ class HamelOseenVortexCreator:
         self.dir_data = self.working_dir + "/data"
         if not os.path.isdir(self.dir_data):
             helper.create_dir(self.dir_data)
-        self.n_existing_orders = len(os.listdir(self.dir_data))
         self.background_truth = None
 
         self.dir_imgs = None
@@ -595,14 +596,16 @@ class HamelOseenVortexCreator:
     def create_pngs(self, dpi: int=10) -> None:
         matplotlib.use("Agg")
         self.dpi = dpi
-        if self.n_existing_orders == self.df_database.shape[0]:
-            print("Current data orders already exist.")
-            return None
 
-        for idx_row in range(self.n_existing_orders, self.df_database.shape[0]):
+        for idx_row in range(self.df_database.shape[0]):
             self.__dataframe_row_to_params(self.df_database.iloc[idx_row], idx_row)
-            homogeneous_noise, local_noise, local_noise_area_covered = 0, 0, 0
             helper.create_dir(self.dir_imgs)
+            n_existing_imgs = len(os.listdir(self.dir_imgs))
+            if n_existing_imgs == self.n_imgs:
+                continue
+            elif n_existing_imgs != 0 and n_existing_imgs < self.n_imgs:
+                print(f"Unfinished creation of data in {self.dir_imgs}.")
+            homogeneous_noise, local_noise, local_noise_area_covered = 0, 0, 0
             df_bbox = pd.DataFrame(columns=["bb_xmin", "bb_ymin", "bb_xmax", "bb_ymax"])
             df_info = pd.DataFrame(columns=["distance", "local_noise_area", "homogeneous_noise", "local_noise"])
             df_bbox.to_csv(self.file_bbox, index=False), df_info.to_csv(self.file_additional_img_information,
@@ -613,7 +616,7 @@ class HamelOseenVortexCreator:
             stretch_gamma, offset_gamma = helper.interval_to_shape_params(self.gamma)
             stretch_time, offset_time = helper.interval_to_shape_params(self.time)
 
-            for idx_img in range(self.n_imgs):
+            for idx_img in range(n_existing_imgs, self.n_imgs):
                 u, v = self.create_background_flow(self.n_information_per_axis_x,
                                                    self.n_information_per_axis_y,
                                                    self.rn_choice.choice([-1, 1]) * self.rn_u.random(),
@@ -825,19 +828,29 @@ class HamelOseenVortexCreator:
         self.dir_imgs = self.dir_data + f"/{idx}/imgs"
         self.file_bbox = self.dir_data + f"/{idx}/bbox.dat"
         self.file_additional_img_information = self.dir_data + f"/{idx}/imgsInformation.dat"
-        information_per_axis = ast.literal_eval(row["nInfoPerAxis"])
-        self.n_information_per_axis_x, self.n_information_per_axis_y = information_per_axis[0], information_per_axis[1]
 
         self.plot_type, self.bbox_size_fac = row["plotType"], row["bboxSizeFac"]
+        self.info_axis_type = row["infoAxisType"]
+        information_per_axis = ast.literal_eval(row["nInfoPerAxis"])
         if self.plot_type == "vec":
             size, self.arrowhead = ast.literal_eval(row["imgSize"]), row["arrowhead"]
             self.width, self.height = size[0]/self.dpi, size[1]/self.dpi
             self.img_width, self.img_height = int(self.width*self.dpi), int(self.height*self.dpi)
             self.bbox_size_x = self.bbox_size_fac * self.img_width
             self.bbox_size_y = self.bbox_size_fac * self.img_height
+
+            if self.info_axis_type == "percentage":
+                self.n_information_per_axis_x = int(self.img_width*float(row["percentageInfoAxis"])/100)
+                self.n_information_per_axis_y = int(self.img_height*float(row["percentageInfoAxis"])/100)
+            else:
+                self.n_information_per_axis_x = information_per_axis[0]
+                self.n_information_per_axis_y = information_per_axis[1]
         else:
+            self.n_information_per_axis_x = information_per_axis[0]
+            self.n_information_per_axis_y = information_per_axis[1]
             self.bbox_size_x = self.bbox_size_fac * self.n_information_per_axis_x
             self.bbox_size_y = self.bbox_size_fac * self.n_information_per_axis_y
+
 
         self.gamma, self.time, self.n_imgs = ast.literal_eval(row["gamma"]), ast.literal_eval(row["time"]), row["nImg"]
         self.noise_fac, self.local_noise_fac = row["noiseFac"], row["localNoiseFac"]
