@@ -120,7 +120,6 @@ class EarlyStopper():
         :param must_progress_by: expected minimum percentage CHANGE PER EPOCH
         validation result
         """
-        # todo changed here
         self.patience = patience
         self.consider = consider
         self.n_dataset = n_dataset
@@ -321,8 +320,9 @@ class TrainRig(UtilityModel, PredictionEvaluator):
         if early_stopper_criteria is not None:
             validation_info = ast.literal_eval(self.orders.get_value_for(dir_ids, "validationInfo"))
             val_data_sets = list()
+            n_validation_sets = validation_info[0]
             imgs_per_validation = validation_info[1]
-            for data_set_idx in range(validation_info[0]):
+            for data_set_idx in range(n_validation_sets):
                 min_img_idx = n_train+data_set_idx*imgs_per_validation
                 max_img_idx = n_train+(data_set_idx+1)*imgs_per_validation
                 val_data_sets.append(CustomDataset(dir_data_set, file_bbox, (min_img_idx, max_img_idx),
@@ -333,7 +333,7 @@ class TrainRig(UtilityModel, PredictionEvaluator):
             assign_threshold = self.orders.get_value_for(dir_ids, "assignTpThreshold")
             need_size = True if assign_criteria == "distance" else False
             if need_size:
-                assign_threshold *= self.__get_img_size(dir_ids)[0] # distance is not absolut and not normalised
+                assign_threshold *= self.__get_img_size(dir_ids)[0] # distance is now absolut and not normalised
             self.set_assignment(criteria=assign_criteria,
                                 better=self.orders.get_value_for(dir_ids, "assignBetter"),
                                 threshold=assign_threshold)
@@ -342,10 +342,8 @@ class TrainRig(UtilityModel, PredictionEvaluator):
                                          better=self.orders.get_value_for(dir_ids, "predictionBetter"),
                                          threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
             consider = 2
-            val_info = self.orders.get_value_for(dir_ids, "validationInfo")
-            n_dataset = helper.str_list2value(val_info, 0)
             better = "bigger" if early_stopper_criteria == "ap" else "smaller" # else means distance
-            early_stopper = EarlyStopper(patience=0, consider=consider, better=better, n_dataset=n_dataset,
+            early_stopper = EarlyStopper(patience=0, consider=consider, better=better, n_dataset=n_validation_sets,
                                          must_progress_by=0.03, validation_frequency=validation_frequency)
 
             file_additional_information = current_data_dir + "/imgsInformation.dat"
@@ -362,7 +360,7 @@ class TrainRig(UtilityModel, PredictionEvaluator):
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
         stopped_by = "max_epochs"
 
-        for epoch in range(int(self.orders.get_value_for(dir_ids, "maxEpochs"))+1):
+        for epoch in range(int(self.orders.get_value_for(dir_ids, "maxEpochs"))):
             train_one_epoch(model, optimizer, data_loader, self.device, epoch, print_freq=1,
                             print_progress=print_progress)
             lr_scheduler.step()
