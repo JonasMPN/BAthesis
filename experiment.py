@@ -1,5 +1,5 @@
 import os
-from vortex_detection import helper_functions as hf, data_prep as prep, data_post as post
+from vortex_detection import data_prep as prep, data_post as post
 from vortex_detection import structure_test_rig as test, structure_train_rig as train, structure_evaluation_rig as eval
 from data_visualise import Visualise
 from helper_functions import Helper
@@ -11,15 +11,15 @@ workload = {
     "train": True,
     "test_after_train": True,
     "test": False,
-    "visualisation": True,
-    "evaluation": False,
+    "visualisation": False,
+    "evaluation": True,
     "post_visualisation": False,
-    "compare": False,
+    "compare": True,
     "turn_off_when_done": False
 }
 
 root = ""
-data_dir = "pre_large/vec_info_diff"
+data_dir = "pre_large/col_size_diff"
 file_ending_additional_info = "imgsInformation.dat"
 
 categories = {"worst": [0, 10], "best": [90, 100]}  # 0,10 means the biggest 10% of the data
@@ -51,11 +51,14 @@ order_algorithm = "full_fac"  # can either be 'full_fac' or 'specific'
 parameters = {
     "data": {
         "arrowhead": ["yes"],
-        "plotType": ["vec"],  # "vec" (vector) or "col" (colour)
-        "imgSize": [[600,600]],  # (width, height)
+        "plotType": ["col"],  # "vec" (vector) or "col" (colour)
+        "imgSize": [[100,100], [200,200], [300,300], [400,400], [500,500], [600,600], [700,700], [800,800]],  # (width,
+        # height)
         "nImg": [261],
         "bboxSizeFac": [0.2],
-        "nInfoPerAxis": [[20, 20], [30, 30], [40, 40], [50, 50], [60, 60], [70,70], [80,80], [90,90], [100, 100]],
+        "nInfoPerAxis": [[100,100], [200,200], [300,300], [400,400], [500,500], [600,600], [700,700], [800,800]],
+        "percentageInfoAxis": [10],
+        "infoAxisType": ["percentage"],  # percentage or absolute
         "nVortices": [[1,2]],
         "noiseFac": [0, 2],
         "localNoiseFac": [0, 2],
@@ -65,7 +68,10 @@ parameters = {
         "seed": [42],
         "gamma": [[3,3], [2,4]],
         "time": [[80,90]],
-        "ignore": [["plotType", ["col", "arrowheadWanted", "size"]]]
+        "ignore": [
+            ["plotType", [["col", "arrowhead", "imgSize", "infoAxisType"]]],
+            ["infoAxisType", [["percentage", "nInfoPerAxis"], ["absolute", "percentageInfoAxis"]]],
+        ]
     },
     "train": {
         "nImgTrain": [100],
@@ -90,11 +96,12 @@ handle_additional_information = {
     "n_vortices": "sum"
 }
 
-compare_param = "nInfoPerAxis"
+compare_param = "imgSize"
 criteria = {"mean_ap": "bigger"}
-result_cols = ["mean_distance_normalised", "not_detected_normalised", "epochs"]
-mean_cols = ["mean_distance_normalised", "not_detected_normalised", "epochs"]
-ignore_cols = ["stoppedBy", "arrowheadWanted", "size", "plotType"]
+result_cols = ["mean_distance_normalised", "detected_normalised", "epochs", "gi", "slp", "li", "nd"]
+mean_cols = ["mean_distance_normalised", "detected_normalised", "epochs", "gi", "slp", "li", "nd"]
+ignore_cols = ["arrowhead", "plotType"]
+validation_cols = ["stoppedBy"]
 plot_as_compare = ["bar"]
 
 working_dir = root+"/"+data_dir
@@ -141,8 +148,9 @@ if workload["visualisation"]:
 
 if workload["evaluation"]:
     evaluate = eval.EvaluationRig(orders, working_dir, file_protocol)
-    evaluate.predictions(handle_additional_information, ["noiseFac", "localNoiseFac", "nLocalNoiseAreas"," valInfo",
-                                                         "maxEpochs"])
+    evaluate.predictions(handle_additional_information,
+                         ["noiseFac", "localNoiseFac", "nLocalNoiseAreas"," valInfo", "maxEpochs"],
+                         validation_cols)
 
 if workload["post_visualisation"]:
     vis = post.PostVisualisation(dir_results=working_dir+"/results_vis", protocol_file=file_protocol,
