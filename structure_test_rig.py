@@ -48,7 +48,7 @@ class TestRig(util_model):
         dir_train = current_data_dir + f"/{dir_ids['train']}"
         dir_test = dir_train + f"/{dir_ids['test']}"
 
-        if self.orders.get_value_for(dir_ids, "epochs") == None:
+        if pd.isna(self.orders.get_value_for(dir_ids, "epochs")):
             print(f"Test directory {dir_ids['test']} does not have a trained model.")
             return
 
