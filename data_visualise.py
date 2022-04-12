@@ -5,6 +5,7 @@ from helper_functions import Helper
 from PIL import Image, ImageDraw
 from data_evaluation import PredictionEvaluator
 import pandas as pd
+import ast
 
 helper = Helper()
 
@@ -34,9 +35,14 @@ class Visualise(PredictionEvaluator):
 
         self.dir_save = dir_test + "/predictions_visualised"
         helper.create_dir(self.dir_save, overwrite=True)
-        self.set_assignment(criteria=self.orders.get_value_for(dir_ids, "assignCriteria"),
+        assign_criteria = self.orders.get_value_for(dir_ids, "assignCriteria")
+        assign_threshold = self.orders.get_value_for(dir_ids, "assignTpThreshold")
+        need_size = True if assign_criteria == "distance" else False
+        if need_size:
+            assign_threshold *= self.__get_img_size(dir_ids)[0]  # distance is now absolut and not normalised
+        self.set_assignment(criteria=assign_criteria,
                             better=self.orders.get_value_for(dir_ids, "assignBetter"),
-                            threshold=self.orders.get_value_for(dir_ids, "assignTpThreshold"))
+                            threshold=assign_threshold)
         self.set_prediction_criteria(criteria=self.orders.get_value_for(dir_ids, "predictionCriteria"),
                                      better=self.orders.get_value_for(dir_ids, "predictionBetter"),
                                      threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
@@ -95,3 +101,14 @@ class Visualise(PredictionEvaluator):
         if score is not None:
             draw.text((bbox[0], bbox[1]), text=str(score))
 
+    def __get_img_size(self, dir_ids: dict) -> tuple[int, int] or None:
+        plotType = self.orders.get_value_for(dir_ids, "plotType")
+        if plotType == "vec":
+            size = ast.literal_eval(self.orders.get_value_for(dir_ids, "imgSize"))
+            width, height = size[0], size[1]
+        elif plotType == "col":
+            size = ast.literal_eval(self.orders.get_value_for(dir_ids, "nInfoPerAxis"))
+            width, height = size[0], size[1]
+        else:
+            return None
+        return width, height
