@@ -37,6 +37,7 @@ class Orders:
         self.file_databases = dict()
         self.df_databases = dict()
         self.existing_parameters = dict()
+        self.convert_to_str = dict()
 
         for order_type in self.order_type_succession:
             self.file_databases[order_type] = working_dir + "/" + f"database_{order_type}.dat"
@@ -44,6 +45,11 @@ class Orders:
                 self.df_databases[order_type] = pd.read_csv(self.file_databases[order_type], index_col=None)
                 columns = self.df_databases[order_type].columns.tolist()
                 self.existing_parameters[order_type] = [param for param in columns if "dir" not in param]
+                to_convert = list()
+                for col in self.existing_parameters[order_type]:
+                    if "None" in self.df_databases[order_type][col].unique():
+                        to_convert.append(col)
+                self.convert_to_str[order_type] = to_convert
             except FileNotFoundError:
                 self.df_databases[order_type] = None
                 self.existing_parameters[order_type] = None
@@ -239,6 +245,22 @@ class Orders:
         accepted_order_types = self.order_type_succession
         if order_type not in accepted_order_types:
             raise AttributeError(f"'order_type' must be one of {accepted_order_types} but was {order_type}.")
+        if self.df_databases[order_type] is None:
+            cols = list(self.primary_parameters[order_type].keys()) + list(self.secondary_parameters[order_type].keys())
+            self.df_databases[order_type] = pd.DataFrame(columns=cols)
+            self.df_databases[order_type].to_csv(self.file_databases[order_type], index=False)
+        else:
+            pass
+
+        for param in self.convert_to_str[order_type]:
+            if param in self.primary_parameters[order_type]:
+                as_str = list()
+                for value in copy(self.primary_parameters[order_type][param]):
+                    if type(value) != str:
+                        as_str.append(str(value))
+                    else:
+                        as_str.append(value)
+                self.primary_parameters[order_type][param] = as_str
         self.orders[order_type] = implemented[order_algorithm](order_type)
         self.__clean_orders(order_type)
 
@@ -253,13 +275,6 @@ class Orders:
 
     def __conduct_order_for_type(self, order_type: str):
         """"""
-        if self.df_databases[order_type] is None:
-            cols = list(self.primary_parameters[order_type].keys()) + list(self.secondary_parameters[order_type].keys())
-            self.df_databases[order_type] = pd.DataFrame(columns=cols)
-            self.df_databases[order_type].to_csv(self.file_databases[order_type], index=False)
-        else:
-            pass
-
         orders = copy(self.orders[order_type])
         if order_type is not self.order_type_succession[0]:
             parented_orders = orders
@@ -403,7 +418,7 @@ class Orders:
             return
         for trigger_param, info_lists in self.__ignore_param_for_order[order_type].items():
             for info_list in info_lists:
-                trigger_value = info_list[0]
+                trigger_value = info_list[0] if type(info_list[0]) != list else str(info_list[0])
                 ignore_parameters = info_list[1:]
                 dict_for_df = helper.merge_list_of_dicts(self.orders[order_type])
                 df_all_orders = pd.DataFrame(dict_for_df)
@@ -473,7 +488,7 @@ class Orders:
                         break
                     if type(value) == str:
                         if any(character.isdigit() for character in value):
-                            value = ast.literal_eval(value)
+                            value = ast.literal_eval(value)  # problem when a string value contains a digit
                     elif int(value) == value:
                         value = int(value)
                     primary_params[param].append(value)
@@ -605,11 +620,12 @@ class HamelOseenVortexCreator:
                 continue
             elif n_existing_imgs != 0 and n_existing_imgs < self.n_imgs:
                 print(f"Unfinished creation of data in {self.dir_imgs}.")
+                df_bbox = pd.read_csv(self.file_bbox, index_col=None)
+                df_info = pd.read_csv(self.file_additional_img_information, index_col=None)
+            else:
+                df_bbox = pd.DataFrame(columns=["bb_xmin", "bb_ymin", "bb_xmax", "bb_ymax"])
+                df_info = pd.DataFrame(columns=["distance", "local_noise_area", "homogeneous_noise", "local_noise"])
             homogeneous_noise, local_noise, local_noise_area_covered = 0, 0, 0
-            df_bbox = pd.DataFrame(columns=["bb_xmin", "bb_ymin", "bb_xmax", "bb_ymax"])
-            df_info = pd.DataFrame(columns=["distance", "local_noise_area", "homogeneous_noise", "local_noise"])
-            df_bbox.to_csv(self.file_bbox, index=False), df_info.to_csv(self.file_additional_img_information,
-                                                                        index=False)
             if self.plot_type == "vec":
                 self.crop_rectangle = self.__get_crop_rectangle()
 
@@ -671,14 +687,14 @@ class HamelOseenVortexCreator:
                              "n_vortices": len(center_list)})
                 df_bbox = df_bbox.append(helper.merge_list_of_dicts(bboxes), ignore_index=True)
                 df_info = df_info.append(img_info, ignore_index=True)
-                df_bbox.to_csv(self.file_bbox, index=False),
-                df_info.to_csv(self.file_additional_img_information, index=False)
 
                 file_img = self.dir_imgs + f"/{idx_img}.png"
                 if self.plot_type == "vec":
                     self.__vector_field2image(file_img, x, y, u, v, bbox_list_plot)
                 elif self.plot_type == "col":
                     self.vector_field2colour_plot(file_img, u, v)
+            df_bbox.to_csv(self.file_bbox, index=False),
+            df_info.to_csv(self.file_additional_img_information, index=False)
         return None
 
     def __create_vortex_vector_field(self,
@@ -857,9 +873,12 @@ class HamelOseenVortexCreator:
         self.n_local_noise_areas = row["nLocalNoiseAreas"]
         self.n_vortices_per_img = ast.literal_eval(row["nVortices"])
 
-        self.vortex_distance = row["presetDistance"]
+        self.vortex_distance = float(row["presetDistance"]) if row["presetDistance"] != "None" else None
         self.rand_rot_dir = row["randRotDir"]
-        self.center_distance = self.bbox_size_fac * self.vortex_distance
+        if self.vortex_distance == None:
+            self.center_distance = None
+        else:
+            self.center_distance = self.bbox_size_fac * self.vortex_distance
         self.background_truth = np.zeros((self.n_information_per_axis_x * self.n_information_per_axis_y))
         self.__set_seeds(row["seed"])
 
@@ -926,7 +945,7 @@ class HamelOseenVortexCreator:
         n_imgs, _ = df_bbox.shape
         original_dir = working_dir + train_or_test + "/"
         bbox_dir = working_dir + train_or_test + "_bbox/"
-        hf.create_directory(bbox_dir)
+        helper.create_dir(bbox_dir)
         for index in range(n_imgs):
             file_image = original_dir + f"{index}.png"
             boxes, _ = helper.pd_row2(dataframe=df_bbox, index_col=index, to="list")
@@ -963,7 +982,7 @@ class NonAnalyticalData:
             dir_save += "_mean"
         if normalise:
             dir_save += "_normalise"
-        hf.create_directory(dir_save)
+        helper.create_dir(dir_save)
 
         rows = mat["U"].shape[0]
         upper_lim = rows - 1
