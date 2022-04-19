@@ -109,7 +109,7 @@ class EvaluationRig(PredictionEvaluator):
         :param save_directory:
         :param param:
         :param result_cols: columns that represent parameters that have not been set, but are results of an experiment
-        :param criteria: {"param": "bigger" or "smaller"}
+        :param criteria: {"param": "bigger" or "smaller", "backup_param": "bigger" or "smaller"}
         :param ignore_cols: columns that will be ignored
         :param mean_cols: columns
         :return:
@@ -117,8 +117,10 @@ class EvaluationRig(PredictionEvaluator):
         if not os.path.isdir(save_directory):
             helper.create_dir(save_directory)
 
-        criteria_param = next(iter(criteria))
+        criteria_keys = iter(criteria)
+        criteria_param, backup_param = next(criteria_keys), next(criteria_keys)
         better = criteria[criteria_param]
+        better_backup = criteria[backup_param]
         if better not in ["bigger", "smaller"]:
             raise ValueError(f"Parameter 'criteria' must be a dict with a value of either 'bigger' or 'smaller'.")
         for ignore in ignore_cols:
@@ -143,10 +145,24 @@ class EvaluationRig(PredictionEvaluator):
         n_param_combinations = 0
         counter = 0
         while df_param_combinations.shape[0] > 0:
-            ids = self.__filter_param_combination(df_param_combinations).index.tolist()
+            # ids = self.__filter_param_combination(df_param_combinations).index.tolist()
+            ids = [16*i+counter for i in range(2)]
             df_filtered = df_protocol.loc[ids]
-            best_idx = df_filtered[criteria_param].idxmax() if better == "bigger" else \
-                       df_filtered[criteria_param].idxmin()
+            best_idx = None
+            for param, better_str in criteria.items():
+                better = max if better_str == "bigger" else min
+                best_value = better(df_filtered[param].dropna())
+                df_filtered = df_filtered.loc[df_filtered[param] == best_value]
+                if df_filtered.shape[0] == 1:
+                    best_idx = df_filtered.index[0]
+                    break
+            if best_idx is None:
+                helper.warning(f"During the comparison of {self.file_protocol} there were multiple values for the "
+                               f"comparison parameter that had the exact same criteria values. Add more criteria "
+                               f"criteria parameters to identify the single best comparison value. \n"
+                               f"The smallest row index will now be chosen.")
+                best_idx = df_filtered.index[0]
+
             compare_overview.append(df_protocol[compare_col].loc[best_idx])
             df_param_combinations = df_param_combinations.drop(ids)
             n_param_combinations += 1
@@ -154,12 +170,12 @@ class EvaluationRig(PredictionEvaluator):
 
         compare_values = df_protocol[compare_col].unique().tolist()
         mean_values = {mean_param: {compare_value: None for compare_value in compare_values} for mean_param in
-                       [f"{criteria_param}_best"]+mean_cols}
+                       ["criteria_best"]+mean_cols}
         for compare_value in compare_values:
             df_filtered = df_protocol.loc[df_protocol[compare_col] == compare_value]
             for mean_col in mean_cols:
                 mean_values[mean_col][compare_value] = df_filtered[mean_col].mean()
-            mean_values[f"{criteria_param}_best"][compare_value] = compare_overview.count(
+            mean_values["criteria_best"][compare_value] = compare_overview.count(
                 compare_value)/n_param_combinations
             #  The above line is not actually a mean value.
         df_mean_values = pd.DataFrame(mean_values)
@@ -169,8 +185,9 @@ class EvaluationRig(PredictionEvaluator):
             df_mean_values[col] = df_mean_values[col]/max_value
             max_values[col] = round(max_value, 3)
         df_mean_values = df_mean_values.T if plot_as == "bar" else df_mean_values
-        plotter[plot_as](save_directory, compare_col, n_param_combinations, df_mean_values, 16, 9, 100,
-                         max_values=max_values)
+        title = f"Compared parameter: {compare_col}. Parameter combinations: {n_param_combinations}. \n" \
+                f"Best criteria: {criteria}."
+        plotter[plot_as](save_directory, compare_col, title, df_mean_values, 16, 9, 100, max_values=max_values)
 
     def __evaluate_dir_ids(self, dir_ids: dict, n_vortices: int) -> dict:
         current_data_dir = self.dir_root + f"/data/{dir_ids['data']}"
@@ -244,6 +261,7 @@ class EvaluationRig(PredictionEvaluator):
         :param columns:
         :return:
         """
+        dataframe = dataframe.astype({col: "str" for col in columns})
         new_columns = {col: dict() for col in columns}
         column_lengths = dataframe.shape[0]
         for column in columns:
@@ -276,7 +294,7 @@ class EvaluationRig(PredictionEvaluator):
     @staticmethod
     def __bar_plots(save_directory: str,
                     compare_param: str,
-                    n_param_combinations: int,
+                    title: str,
                     dataframe: pd.DataFrame,
                     img_width: float,
                     img_height: float,
@@ -285,7 +303,7 @@ class EvaluationRig(PredictionEvaluator):
         fig, ax = plt.subplots()
         fig.set_size_inches(img_width, img_height)
         dataframe.plot.bar(ax=ax)
-        plt.title(f"Compared parameter: {compare_param}. Parameter combinations: {n_param_combinations}")
+        plt.title(title)
         plt.xticks(rotation="horizontal")
         new_labels = list()
         for Text in ax.get_xticklabels():
@@ -301,7 +319,7 @@ class EvaluationRig(PredictionEvaluator):
     @staticmethod
     def __pie_plots(save_directory: str,
                     compare_param: str,
-                    n_param_combinations: int,
+                    title: str,
                     dataframe: pd.DataFrame,
                     img_width: float,
                     img_height: float,
@@ -311,7 +329,7 @@ class EvaluationRig(PredictionEvaluator):
             fig, ax = plt.subplots()
             fig.set_size_inches(img_width, img_height)
             dataframe[col].plot.pie(y=col, ax=ax)
-            plt.title(f"Compared parameter: {compare_param}. Parameter combinations: {n_param_combinations}")
+            plt.title(title)
             plt.savefig(save_directory + f"/compare_{compare_param}_pie_{col}.png", dpi=dpi)
             plt.close(fig)
 
