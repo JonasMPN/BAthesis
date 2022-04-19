@@ -1,3 +1,4 @@
+import os.path
 from typing import List
 
 import data_prep as prep
@@ -24,14 +25,42 @@ class Visualise(PredictionEvaluator):
             helper.print_progress(idx_test, n_test_orders, "Visualising")
             self.__vis_dir_ids(dir_ids, visualise_as)
 
+    def truth(self, working_dir: str=None):
+        """
+        Plot truth bboxes for a single parameter combination using 'working_dir'. When 'working_dir' is None,
+        the bboxes for all orders will be plotted.
+        :param working_dir:
+        :return:
+        """
+        if working_dir is not None:
+            self.__single_truth(working_dir)
+        else:
+            for idx_test, dir_ids in enumerate(self.orders.get_all_parents_dir_idx("test")):
+                self.__single_truth(dir_ids["data"])
+
+    def __single_truth(self, working_dir: str=None):
+        dir_bbox_plot = working_dir + "/imgs_bbox"
+        helper.create_dir(dir_bbox_plot)
+        file_bbox = working_dir + "/bbox.dat"
+        df_bbox = pd.read_csv(file_bbox, index_col=None)
+        for img_idx in range(len(os.listdir(working_dir + "/imgs"))):
+            bboxes, _ = helper.pd_row2(df_bbox, img_idx, "list")
+            img = Image.open(working_dir + f"/imgs/{img_idx}.png").convert("RGB")
+            draw = ImageDraw.Draw(img)
+            for bbox in bboxes:
+                self.__visualise_bbox(draw, bbox, "green")
+            img.save(dir_bbox_plot + f"/{img_idx}.png")
+
     def __vis_dir_ids(self,
                       dir_ids: dict,
                       visualise_as: list[str]):
         current_data_dir = self.dir_root + f"/data/{dir_ids['data']}"
         dir_train = current_data_dir + f"/{dir_ids['train']}"
         dir_test = dir_train + f"/{dir_ids['test']}"
-        prediction_file = dir_test + "/predictions.dat"
+        file_prediction = dir_test + "/predictions.dat"
         file_bbox = current_data_dir + "/bbox.dat"
+        if not os.path.isfile(file_prediction):
+            return
 
         self.dir_save = dir_test + "/predictions_visualised"
         helper.create_dir(self.dir_save, overwrite=True)
@@ -46,7 +75,7 @@ class Visualise(PredictionEvaluator):
         self.set_prediction_criteria(criteria=self.orders.get_value_for(dir_ids, "predictionCriteria"),
                                      better=self.orders.get_value_for(dir_ids, "predictionBetter"),
                                      threshold=self.orders.get_value_for(dir_ids, "predictionThreshold"))
-        self.set_predictions(prediction_file)
+        self.set_predictions(file_prediction)
         self.set_truth(file_bbox)
         predictions_labeled = self.get(["labels"])[0]["labels"]
         self.__visualise_predictions(current_data_dir, pd.read_csv(file_bbox, index_col=None), predictions_labeled,
