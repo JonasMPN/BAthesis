@@ -252,15 +252,16 @@ class Orders:
         else:
             pass
 
-        for param in self.convert_to_str[order_type]:
-            if param in self.primary_parameters[order_type]:
-                as_str = list()
-                for value in copy(self.primary_parameters[order_type][param]):
-                    if type(value) != str:
-                        as_str.append(str(value))
-                    else:
-                        as_str.append(value)
-                self.primary_parameters[order_type][param] = as_str
+        if order_type in self.convert_to_str.keys():
+            for param in self.convert_to_str[order_type]:
+                if param in self.primary_parameters[order_type]:
+                    as_str = list()
+                    for value in copy(self.primary_parameters[order_type][param]):
+                        if type(value) != str:
+                            as_str.append(str(value))
+                        else:
+                            as_str.append(value)
+                    self.primary_parameters[order_type][param] = as_str
         self.orders[order_type] = implemented[order_algorithm](order_type)
         self.__clean_orders(order_type)
 
