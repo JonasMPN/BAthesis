@@ -13,7 +13,7 @@ This file provides functionalities to:
 ## data_post.py  
 This file provides functionalities to:  
 - create a parallel coordinates plot of the information contained in a protocol file (a file that keeps track of all parameter combinations and their resuluts)
-- turns all information from a protocol file to a format that above mentioned plotting functionality requires  
+- turn all information from a protocol file to a format that above mentioned plotting functionality requires  
 
 ## data_prep.py  
 This file provides functionalities to:  
